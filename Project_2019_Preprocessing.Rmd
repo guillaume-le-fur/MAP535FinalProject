@@ -1,0 +1,117 @@
+---
+title: "House Prices"
+subtitle: "MAP 535 Regression"
+author: ""
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(caret)
+library(GGally)
+library(lattice)
+library(corrplot)
+library(magrittr)
+library(xgboost)
+theme_set(theme_bw())
+```
+
+## Preliminary
+
+### Loading the data set
+
+```{r loading housing data}
+train <- read_csv(file = 'train_raw.csv')
+```
+
+
+
+### Checking variables type
+
+```{r}
+str(train)
+```
+
+### Preprocessing I: types
+
+First, we use the variable `Id` to index observations and remove this column.
+
+```{r}
+row.names(train) <- train$Id
+train <- subset(train,select=c(-Id))
+```
+
+We cast categorical variables (here with character strings as modalities) into factors.
+
+```{r}
+var.quali <- sapply(select(train,-"SalePrice"), function(x) is.character(x))
+var.quali["MSSubClass"]=TRUE
+train %<>% mutate_each_(funs(as.factor), names(var.quali)[var.quali])
+```
+
+Check again types
+```{r}
+str(train)
+```
+
+
+
+### Preprocessing II: missing data
+
+The following script detects and deletes the variable with a proportion of missing values superior to 40%.
+
+```{r missing}
+missing_threshold <- .4
+is_too_scarce <- lapply(select(train, -SalePrice), function(x) mean(is.na(x)) > missing_threshold)
+is_too_scarce <- map_lgl(select(train, -SalePrice), ~mean(is.na(.x)) > missing_threshold)
+not_too_scarce <- names(is_too_scarce)[!is_too_scarce]
+train <- select(train, SalePrice, not_too_scarce)
+train %<>% select(SalePrice, not_too_scarce)
+```
+
+### Preprocessing III: imputation, standardization
+
+For variables with a proportion of missing data inferior to 40%. We apply an elementary imputation scheme:
+
+  - For quantitative data, we use k nearest neigbours technique. We delete the variables with variance too close to 0. We also apply additional centering and rescaling treatments.
+
+
+```{r imputation continuous pred}
+imputedData <- preProcess(
+  select(train, -SalePrice),
+  method = c("center", "scale", "knnImpute", "nzv", 'YeoJohnson')
+  )
+trainTrans <- predict(imputedData, train)
+```
+
+  - For categorical data, we use the most frequent mode.
+
+```{r}
+trainTrans <- map_df(trainTrans, function(x) {
+    if (anyNA(x)) x[is.na(x)] <- names(which.max(table(x)))
+    x
+  }
+)
+```
+
+```{r}
+trainImputed <- map_df(train[,colnames(trainTrans)], function(x) {
+    if (anyNA(x) & is.factor(x)) x[is.na(x)] <- names(which.max(table(x)))
+    x
+  }
+)
+colnames(trainImputed) <- make.names(colnames(trainImputed))
+mice_mice <- mice::mice(select(trainImputed,-"SalePrice"), m=1, print = FALSE)
+trainImputed <- cbind(trainImputed$SalePrice, mice::complete(mice_mice,1))
+colnames(trainImputed) <- colnames(trainTrans)
+```
+
+### Save the preprocessed data
+```{r}
+write.csv(trainTrans, 'train_preprocessed.csv')
+write.csv(trainImputed, 'train_imputed.csv')
+```
+
