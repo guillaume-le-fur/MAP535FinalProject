@@ -6,5 +6,92 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
+library(dplyr)
+library(plotly)
+library(leaps)
+library(MASS)
 knitr::opts_chunk$set(echo = FALSE)
+
+train <- as.data.frame(data.table::fread("data/train_preprocessed.csv"))
+numeric_train <- data.frame(train %>% select_if(is.numeric))
 ```
+
+# Introduction
+
+
+
+The following table contains the 5 predictors that are the most correlated to the sales price.
+
+
+
+# Exploratory Data Analysis/Inital Modeling
+
+```{r High Correlations}
+cn <- colnames(numeric_train)
+df.high.cor <- data.frame(
+  x = c(),
+  y = c(),
+  cor = c(),
+  stringsAsFactors = F
+)
+cor.threshold <- .7
+for (i in 1:ncol(numeric_train)){
+  cni <- cn[i]
+  for (j in 1:ncol(numeric_train)){
+    cnj <- cn[j]
+    cv <- cor(numeric_train[[cni]], numeric_train[[cnj]])
+    if (cv > cor.threshold && i < j){
+      df.high.cor <- df.high.cor %>% rbind(
+        data.frame(
+          x = cni, 
+          y = cnj, 
+          cor = cv
+        )
+      )
+    }
+  }
+}
+df.high.cor <- df.high.cor %>% arrange(desc(cor))
+df.high.cor
+```
+
+```{r Correlations with Y}
+apply.res <- apply(numeric_train, 2, function(x){cor(x, numeric_train$SalePrice)})
+df.cor.to.y <- data.frame(
+  column = names(apply.res),
+  correlation = apply.res
+) %>% 
+  filter(correlation < 1) %>% 
+  top_n(5, correlation)
+df.cor.to.y
+
+```
+
+# Modeling and Diagnostics
+
+```{r Full LM}
+res.lm.intercept <- lm(SalePrice~1, data = train)
+res.full.lm <- lm(SalePrice~., data = train)
+sum.full.lm <- summary(res.full.lm)
+nrow(sum.full.lm$coefficients)
+```
+
+The largest p-value for the T-tests of every predictor is `r min(sum.full.lm$coefficients[, 4])`, which is really high. On the model with all the data, the significativity of the predictors isn't really high.
+
+```{r Variable selection}
+cn <- colnames(train)
+cn <- cn[cn != "SalePrice"]
+res.backward <- stepAIC(
+  res.full.lm, 
+  ~.,
+  trace = F,
+  direction=c('backward')
+)
+nrow(summary(res.backward)$coefficients)
+```
+
+
+# Final Models
+
+# Discussion
+
