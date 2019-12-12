@@ -6,77 +6,104 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-library(dplyr)
 library(plotly)
 library(leaps)
 library(MASS)
+library(caret)
+library(dplyr)
 knitr::opts_chunk$set(echo = FALSE)
+load("data/DataProject.RData")
 
-train <- as.data.frame(data.table::fread("data/train_preprocessed.csv"))
-numeric_train <- data.frame(train %>% select_if(is.numeric))
+train.x <- train %>% select(-SalePrice)
+train.y <- train %>% select(SalePrice) %>% "$"(SalePrice)
+
+test.x <- test %>% select(-SalePrice)
+test.y <- test %>% select(SalePrice) %>% "$"(SalePrice)
+
+full <- train %>% 
+  mutate(type = "train") %>%
+  rbind(test %>% mutate(type = "test")) %>% 
+  transform(type = as.factor(type))
+
+
+full.modeled <- model.matrix(SalePrice ~ ., data = full)
+train.modeled <- full.modeled %>%
+  as.data.frame() %>% 
+  filter(typetrain == 1) %>% 
+  dplyr::select(-typetrain) %>% 
+  as.matrix()
+test.modeled <- full.modeled %>%
+  as.data.frame() %>% 
+  filter(typetrain == 0) %>%
+  select(-typetrain) %>% 
+  as.matrix()
 ```
 
 # Introduction
 
-
-
 The following table contains the 5 predictors that are the most correlated to the sales price.
-
-
 
 # Exploratory Data Analysis/Inital Modeling
 
 ```{r High Correlations}
-cn <- colnames(numeric_train)
-df.high.cor <- data.frame(
-  x = c(),
-  y = c(),
-  cor = c(),
-  stringsAsFactors = F
-)
-cor.threshold <- .7
-for (i in 1:ncol(numeric_train)){
-  cni <- cn[i]
-  for (j in 1:ncol(numeric_train)){
-    cnj <- cn[j]
-    cv <- cor(numeric_train[[cni]], numeric_train[[cnj]])
-    if (cv > cor.threshold && i < j){
-      df.high.cor <- df.high.cor %>% rbind(
-        data.frame(
-          x = cni, 
-          y = cnj, 
-          cor = cv
-        )
-      )
-    }
-  }
+train.numeric <- train %>% dplyr::select_if(is.numeric)
+cor.train <- cor(train.numeric)
+
+get.high.correlations <- function(cor.matrix, cor.threshold = .7){
+  which(
+    cor.train - lower.tri(
+      matrix(
+        1, 
+        nrow = nrow(cor.train),
+        ncol = nrow(cor.train)
+      ), 
+      diag = TRUE
+    ) > cor.threshold,
+    arr.ind = TRUE
+  ) %>%
+  as.data.frame() %>% 
+  `colnames<-`(c("c1", "c2")) %>% 
+  mutate(
+    couple = paste(
+      colnames(cor.train)[c1],
+      colnames(cor.train)[c2],
+      sep = " and "
+    )
+  ) %>% 
+  select(couple) %>% 
+  "$"(couple) %>% 
+  paste("have a high correlation.")
 }
-df.high.cor <- df.high.cor %>% arrange(desc(cor))
-df.high.cor
-```
 
-```{r Correlations with Y}
-apply.res <- apply(numeric_train, 2, function(x){cor(x, numeric_train$SalePrice)})
-df.cor.to.y <- data.frame(
-  column = names(apply.res),
-  correlation = apply.res
-) %>% 
-  filter(correlation < 1) %>% 
-  top_n(5, correlation)
-df.cor.to.y
-
+get.high.correlations(cor.train)
 ```
 
 # Modeling and Diagnostics
 
-```{r Full LM}
+```{r Full LM, warning=F}
 res.lm.intercept <- lm(SalePrice~1, data = train)
 res.full.lm <- lm(SalePrice~., data = train)
-sum.full.lm <- summary(res.full.lm)
-nrow(sum.full.lm$coefficients)
+par(mfrow = c(2, 3))
+plot(res.full.lm)
+acf(residuals(res.full.lm), main = "")
 ```
 
-The largest p-value for the T-tests of every predictor is `r min(sum.full.lm$coefficients[, 4])`, which is really high. On the model with all the data, the significativity of the predictors isn't really high.
+
+We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
+
+We can observe that the normality hypothesis is not verified when we look at the Q-Q plot, especilally for the tails of the distribution.
+
+The standardized residuals line is not horizontal here, it looks more like a parable. The homoscedasticity postulate is not verified.
+
+On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
+
+We observe no Cook distance over 1 so we can, at first sight infer that there are no outliers. A more detailed outlier analysis is still necessary to be more confident about that.
+
+## Outlier analysis.
+
+TODO
+
+
 
 ```{r Variable selection}
 cn <- colnames(train)
@@ -90,8 +117,52 @@ res.backward <- stepAIC(
 nrow(summary(res.backward)$coefficients)
 ```
 
+```{r}
+predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0, lambda = c(1e3, 1e2, 1e1, 1, 1e-1, 1e-2)){
+  
+  # Fit
+  res.glmnet <- glmnet::glmnet(
+    x = train.x, 
+    y = train.y,
+    alpha = 0,
+    lambda = c(1e3, 1e2, 1e1, 1, 1e-1, 1e-2)
+  )
+  
+  # Prediction
+  res.pred <- predict(res.glmnet, newx = test.x)
+  
+  # MSE
+  mses <- apply(res.pred, 2, function(col){
+    sum((col - test.y)^2)
+  })
+  
+  # Return object
+  list(
+    model = res.glmnet,
+    pred = res.pred,
+    mse = mses
+  )
+}
+
+pred.res <- predict.elsaticnet(
+  train.x = modeled.train, 
+  train.y = train.y, 
+  test.x = modeled.test, 
+  test.y = test.y
+)
+
+pred.res$mse
+```
+
+
+
 
 # Final Models
 
+
+
 # Discussion
+
+```{r}
+```
 
