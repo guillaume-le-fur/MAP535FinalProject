@@ -14,7 +14,7 @@ library(dplyr)
 knitr::opts_chunk$set(echo = FALSE)
 load("data/DataProject.RData")
 
-train.x <- train %>% select(-SalePrice)
+# train.x <- train %>% select(-SalePrice)
 train.y <- train %>% select(SalePrice) %>% "$"(SalePrice)
 
 test.x <- test %>% select(-SalePrice)
@@ -64,15 +64,11 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7){
   as.data.frame() %>% 
   `colnames<-`(c("c1", "c2")) %>% 
   mutate(
-    couple = paste(
-      colnames(cor.train)[c1],
-      colnames(cor.train)[c2],
-      sep = " and "
-    )
+    Column1 = colnames(cor.train)[c1],
+    Column2 = colnames(cor.train)[c2],
+    Correlation = cor.train[c1, ][c2]
   ) %>% 
-  select(couple) %>% 
-  "$"(couple) %>% 
-  paste("have a high correlation.")
+  select(Column1, Column2, Correlation)
 }
 
 get.high.correlations(cor.train)
@@ -87,7 +83,6 @@ par(mfrow = c(2, 3))
 plot(res.full.lm)
 acf(residuals(res.full.lm), main = "")
 ```
-
 
 We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
 
@@ -106,15 +101,15 @@ TODO
 
 
 ```{r Variable selection}
-cn <- colnames(train)
-cn <- cn[cn != "SalePrice"]
-res.backward <- stepAIC(
-  res.full.lm, 
-  ~.,
-  trace = F,
-  direction=c('backward')
-)
-nrow(summary(res.backward)$coefficients)
+# cn <- colnames(train)
+# cn <- cn[cn != "SalePrice"]
+# res.backward <- stepAIC(
+#   res.full.lm, 
+#   ~.,
+#   trace = F,
+#   direction=c('backward')
+# )
+# nrow(summary(res.backward)$coefficients)
 ```
 
 ```{r}
@@ -122,7 +117,7 @@ predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0, lamb
   
   # Fit
   res.glmnet <- glmnet::glmnet(
-    x = train.x, 
+    x = train.x,
     y = train.y,
     alpha = 0,
     lambda = c(1e3, 1e2, 1e1, 1, 1e-1, 1e-2)
@@ -145,16 +140,14 @@ predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0, lamb
 }
 
 pred.res <- predict.elsaticnet(
-  train.x = modeled.train, 
+  train.x = train.modeled, 
   train.y = train.y, 
-  test.x = modeled.test, 
+  test.x = test.modeled, 
   test.y = test.y
 )
 
 pred.res$mse
 ```
-
-
 
 
 # Final Models
@@ -164,5 +157,32 @@ pred.res$mse
 # Discussion
 
 ```{r}
+res.caret.lambda <- caret::train(
+  x = train.modeled,
+  y = train.y,
+  method = "glmnet",
+  tuneGrid = data.frame(
+      alpha = 0,
+      lambda = seq(2e4, 4e4, 100)
+  ),
+  metric = "RMSE"
+)
+res.caret.alpha <- caret::train(
+  x = train.modeled,
+  y = train.y,
+  method = "glmnet",
+  tuneGrid = data.frame(
+      alpha = seq(0, 0.03, 0.002),
+      lambda = res.caret.lambda$bestTune$lambda
+  ),
+  metric = "RMSE"
+)
+```
+
+```{r}
+plot(res.caret.lambda)
+res.caret.lambda$bestTune
+plot(res.caret.alpha)
+res.caret.alpha$bestTune
 ```
 
