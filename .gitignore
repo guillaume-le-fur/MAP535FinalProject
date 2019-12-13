@@ -1,4 +1,6 @@
+#Custom
 *.pdf
+tmp-*.tex
 
 # History files
 .Rhistory

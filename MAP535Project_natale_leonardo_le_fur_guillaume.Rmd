@@ -5,7 +5,7 @@ date: "08/12/2019"
 output: pdf_document
 ---
 
-```{r setup, include=FALSE}
+```{r Setup chunk, include=FALSE}
 library(plotly)
 library(leaps)
 library(MASS)
@@ -14,7 +14,7 @@ library(dplyr)
 knitr::opts_chunk$set(echo = FALSE)
 load("data/DataProject.RData")
 
-# train.x <- train %>% select(-SalePrice)
+y.colname <- "SalePrice"
 train.y <- train %>% select(SalePrice) %>% "$"(SalePrice)
 
 test.x <- test %>% select(-SalePrice)
@@ -41,16 +41,37 @@ test.modeled <- full.modeled %>%
 
 # Introduction
 
-The following table contains the 5 predictors that are the most correlated to the sales price.
+## Purpose of this document
+
+The aim of this document is to summarise and apply what has been covered during the MAP535 course on a real case study. The case study we are interested in is the prediction of the price of a house in the city of Ames, Iowa, given a certain number of predictors.
+Even though the aim of such projects is to give the best possible model for prediction, we chose not to focus on this part because this is a part of data science which is already covered in other courses of this master. We will rather focus on model explainability as this is the main aspect of this course.
+
+## About the data
+
+The dataset we are provided with has the following characteristics : 
+
+- `r nrow(full)` rows (of which `r nrow(train)` for train and `r nrow(test)` for test) and `r ncol(full)` columns.
+- The column to predict is : `r y.colname`.
+- Number of missing values : `r sum(!complete.cases(full))`
 
 # Exploratory Data Analysis/Inital Modeling
 
-```{r High Correlations}
+## Correlations
+
+```{r Correlation threshold definition}
+cor.threshold <- .7
+```
+
+
+First, let's have a look at the correlations. As the correlation matrix is too big to be displayed, we are only pointing out the correlations that are above `r cor.threshold`.
+
+```{r High Correlations function}
 train.numeric <- train %>% dplyr::select_if(is.numeric)
 cor.train <- cor(train.numeric)
+cor.df <- as.data.frame(cor.train)
 
-get.high.correlations <- function(cor.matrix, cor.threshold = .7){
-  which(
+get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter = NULL, max.elements = NULL){
+  res.df <- which(
     cor.train - lower.tri(
       matrix(
         1, 
@@ -61,26 +82,86 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7){
     ) > cor.threshold,
     arr.ind = TRUE
   ) %>%
-  as.data.frame() %>% 
-  `colnames<-`(c("c1", "c2")) %>% 
-  mutate(
-    Column1 = colnames(cor.train)[c1],
-    Column2 = colnames(cor.train)[c2],
-    Correlation = cor.train[c1, ][c2]
-  ) %>% 
-  select(Column1, Column2, Correlation)
+    as.data.frame() %>% 
+    `colnames<-`(c("c1", "c2")) %>% 
+    mutate(
+      Column1 = colnames(cor.train)[c1],
+      Column2 = colnames(cor.train)[c2]
+    ) %>% 
+    mutate(
+      Correlation = apply(., 1, function(row){
+        cor.matrix[
+          as.integer(row[which(names(row) == "c1")]), 
+          as.integer(row[which(names(row) == "c2")])
+        ]
+      })
+    ) %>% 
+    select(Column1, Column2, Correlation) %>% 
+    arrange(desc(Correlation))
+  
+  if(!is.null(column.filter)) res.df <- res.df %>% 
+      filter(Column1 == column.filter | Column2 == column.filter)
+  if(!is.null(max.elements)) res.df <- res.df %>% top_n(5, Correlation)
+  res.df
 }
-
-get.high.correlations(cor.train)
 ```
+
+```{r Printing tables side by side, results='asis', echo=FALSE}
+    # Setting `results = 'asis'` allows for using Latex within the code chunk
+    cat('\\begin{figure}')
+    cat('\\begin{center}')
+    # `{c c}` Creates a two column table
+    # Use `{c | c}` if you'd like a line between the tables
+    cat('\\begin{tabular}{ c c }')
+    print(knitr::kable(
+      get.high.correlations(cor.train, cor.threshold), 
+      format = "latex"
+    ))
+    # Separate the two columns with an `&`
+    cat('&')
+    print(knitr::kable(
+      get.high.correlations(cor.train, .01, "SalePrice", 5), 
+      format = "latex"
+    ))
+    cat('\\end{tabular}')
+    cat("\\caption{Most correlated columns (all | SalePrice)}")
+    cat('\\end{center}')
+    cat('\\end{figure}')
+```
+
+
+## Factors
+
+An intuitive factor that comes to one's mind when thinking about the price of a house is the _neighbourhood_ in which it is located.
+
+```{r, Neighborhood boxplots, fig.height=4}
+graphics::layout(
+  matrix(c(1,2), 1, 2, byrow = TRUE),
+  widths=c(2,1), 
+  heights=c(1,1)
+)
+
+boxplot(
+  SalePrice ~ Neighborhood, 
+  data = full,
+  main = "SalePrice per Neighborhood"
+)
+df.means <- full %>% group_by(Neighborhood) %>% summarise(avg = mean(SalePrice))
+vec.means = df.means$avg
+names(vec.means) <- df.means$Neighborhood
+boxplot(vec.means, main = "Means of Neighborhoods")
+```
+
+On the graph on the left, we plot the boxplot of the SalePrice for every Neighborhood. We notice that 3 neighborhood have noticeably higher values than the others. To check that, we use a boxplot of the averages of the SalePrice per Neighborhood and we see that only one value really stands out. The name of the coresponding Neighborhood is `r names(vec.means)[which.max(vec.means)]` 
+
 
 # Modeling and Diagnostics
 
 ```{r Full LM, warning=F}
 res.lm.intercept <- lm(SalePrice~1, data = train)
 res.full.lm <- lm(SalePrice~., data = train)
-par(mfrow = c(2, 3))
-plot(res.full.lm)
+par(mfrow = c(2, 2))
+plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
 ```
 
@@ -92,12 +173,15 @@ The standardized residuals line is not horizontal here, it looks more like a par
 
 On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
 
-We observe no Cook distance over 1 so we can, at first sight infer that there are no outliers. A more detailed outlier analysis is still necessary to be more confident about that.
 
 ## Outlier analysis.
 
-TODO
+```{r Cooks distance, warning=F}
+plot(res.full.lm, which = 5)
+```
 
+
+We observe no Cook distance over 1 so we can, at first sight infer that there are no outliers. A more detailed outlier analysis is still necessary to be more confident about that.
 
 
 ```{r Variable selection}
@@ -156,33 +240,35 @@ pred.res$mse
 
 # Discussion
 
+Uncomment to run, takes around 1 minute to run.
+
 ```{r}
-res.caret.lambda <- caret::train(
-  x = train.modeled,
-  y = train.y,
-  method = "glmnet",
-  tuneGrid = data.frame(
-      alpha = 0,
-      lambda = seq(2e4, 4e4, 100)
-  ),
-  metric = "RMSE"
-)
-res.caret.alpha <- caret::train(
-  x = train.modeled,
-  y = train.y,
-  method = "glmnet",
-  tuneGrid = data.frame(
-      alpha = seq(0, 0.03, 0.002),
-      lambda = res.caret.lambda$bestTune$lambda
-  ),
-  metric = "RMSE"
-)
+# res.caret.lambda <- caret::train(
+#   x = train.modeled,
+#   y = train.y,
+#   method = "glmnet",
+#   tuneGrid = data.frame(
+#       alpha = 0,
+#       lambda = seq(2e4, 4e4, 100)
+#   ),
+#   metric = "RMSE"
+# )
+# res.caret.alpha <- caret::train(
+#   x = train.modeled,
+#   y = train.y,
+#   method = "glmnet",
+#   tuneGrid = data.frame(
+#       alpha = seq(0, 0.03, 0.002),
+#       lambda = res.caret.lambda$bestTune$lambda
+#   ),
+#   metric = "RMSE"
+# )
 ```
 
 ```{r}
-plot(res.caret.lambda)
-res.caret.lambda$bestTune
-plot(res.caret.alpha)
-res.caret.alpha$bestTune
+# plot(res.caret.lambda)
+# res.caret.lambda$bestTune
+# plot(res.caret.alpha)
+# res.caret.alpha$bestTune
 ```
 
