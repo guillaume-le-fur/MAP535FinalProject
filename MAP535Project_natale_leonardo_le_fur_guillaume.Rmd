@@ -11,6 +11,7 @@ library(leaps)
 library(MASS)
 library(caret)
 library(dplyr)
+library(car)
 knitr::opts_chunk$set(echo = FALSE)
 load("data/DataProject.RData")
 
@@ -160,10 +161,14 @@ On the graph on the left, we plot the boxplot of the SalePrice for every Neighbo
 ```{r Full LM, warning=F}
 res.lm.intercept <- lm(SalePrice~1, data = train)
 res.full.lm <- lm(SalePrice~., data = train)
+```
+
+```{r}
 par(mfrow = c(2, 2))
 plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
 ```
+
 
 We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
 
@@ -173,8 +178,22 @@ The standardized residuals line is not horizontal here, it looks more like a par
 
 On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
 
-
 ## Outlier analysis.
+
+```{r}
+car::influenceIndexPlot(res.full.lm)
+```
+
+
+```{r}
+res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
+```
+
+```{r}
+train %>% summarise(avg = mean(SalePrice))
+train[as.numeric(names(res.outlier.test$p)), ]
+```
+
 
 ```{r Cooks distance, warning=F}
 plot(res.full.lm, which = 5)
@@ -185,41 +204,41 @@ We observe no Cook distance over 1 so we can, at first sight infer that there ar
 
 
 ```{r Variable selection}
-# cn <- colnames(train)
-# cn <- cn[cn != "SalePrice"]
-# res.backward <- stepAIC(
-#   res.full.lm, 
-#   ~.,
-#   trace = F,
-#   direction=c('backward')
-# )
-# nrow(summary(res.backward)$coefficients)
+res.backward <- stepAIC(
+  res.full.lm,
+  ~.,
+  trace = F,
+  direction=c('backward')
+)
+nrow(summary(res.backward)$coefficients)
 ```
 
 ```{r}
-predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0, lambda = c(1e3, 1e2, 1e1, 1, 1e-1, 1e-2)){
+predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0.01, lambda = c(1e5, .5e5, 32200, .25e5, 18000, 1e4, .5e4, 1e3, 1e2, 1e1, 1, 1e-1, 1e-2)){
   
   # Fit
   res.glmnet <- glmnet::glmnet(
     x = train.x,
     y = train.y,
     alpha = 0,
-    lambda = c(1e3, 1e2, 1e1, 1, 1e-1, 1e-2)
+    lambda = lambda
   )
   
   # Prediction
   res.pred <- predict(res.glmnet, newx = test.x)
-  
+  colnames(res.pred) <- lambda
   # MSE
   mses <- apply(res.pred, 2, function(col){
     sum((col - test.y)^2)
   })
+  names(mses) <- as.character(lambda)
   
   # Return object
   list(
     model = res.glmnet,
     pred = res.pred,
-    mse = mses
+    mse = mses,
+    lambda = lambda
   )
 }
 
@@ -229,8 +248,7 @@ pred.res <- predict.elsaticnet(
   test.x = test.modeled, 
   test.y = test.y
 )
-
-pred.res$mse
+plot(sqrt(pred.res$mse) ~ pred.res$lambda, log = "x", type = "o", main = "RMSE=f(lambda)", xlab="lambda", ylab="RMSE")
 ```
 
 
@@ -243,32 +261,24 @@ pred.res$mse
 Uncomment to run, takes around 1 minute to run.
 
 ```{r}
-# res.caret.lambda <- caret::train(
-#   x = train.modeled,
-#   y = train.y,
-#   method = "glmnet",
-#   tuneGrid = data.frame(
-#       alpha = 0,
-#       lambda = seq(2e4, 4e4, 100)
-#   ),
-#   metric = "RMSE"
-# )
-# res.caret.alpha <- caret::train(
-#   x = train.modeled,
-#   y = train.y,
-#   method = "glmnet",
-#   tuneGrid = data.frame(
-#       alpha = seq(0, 0.03, 0.002),
-#       lambda = res.caret.lambda$bestTune$lambda
-#   ),
-#   metric = "RMSE"
-# )
+res.caret <- caret::train(
+  x = train.modeled,
+  y = train.y,
+  method = "glmnet",
+  tuneGrid = expand.grid(
+    alpha = seq(0, 0.03, 0.002),
+    lambda = seq(0, 1e5, 1000)
+  ),
+  metric = "RMSE"
+)
+
 ```
 
 ```{r}
-# plot(res.caret.lambda)
-# res.caret.lambda$bestTune
-# plot(res.caret.alpha)
-# res.caret.alpha$bestTune
+plot(res.caret)
+```
+
+```{r}
+res.caret$bestTune
 ```
 
