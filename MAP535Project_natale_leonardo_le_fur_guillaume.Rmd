@@ -11,11 +11,10 @@ library(leaps)
 library(MASS)
 library(caret)
 library(dplyr)
-<<<<<<< HEAD
 library(car)
-=======
 library(lmtest)
->>>>>>> 6c6d24ce1e67e588a268b4450e72bd6defd364f7
+library(forcats)
+
 knitr::opts_chunk$set(echo = FALSE)
 load("data/DataProject.RData")
 
@@ -35,9 +34,11 @@ full <- train %>%
   mutate(type = "train") %>% # mutate creates a new variable
   rbind(test %>% mutate(type = "test")) %>% 
   transform(type = as.factor(type))
-
+old.full.dim <- dim(full)
 
 full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
+old.full.modeled.dim <- dim(full.modeled)
+
 train.modeled <- full.modeled %>%
   as.data.frame() %>% 
   filter(typetrain == 1) %>% 
@@ -49,39 +50,91 @@ test.modeled <- full.modeled %>%
   select(-typetrain) %>% 
   as.matrix()
 ```
-Many Columns with low counts.
-```{r}
-summary(full)
-```
-# Attempt to reduce categories by grouping
 
-```{r}
-library(forcats)
-full <- subset(full,select=c(-Utilities)) # only 1 observation does not have everything
-full <- subset(full,select=c(-Street)) # Almost all values are Pave
-full$LotConfig <- fct_collapse(full$LotConfig, FR23 = c("FR2", "FR3")) # join 2 cat
-full$LandSlope <- fct_collapse(full$LandSlope, Mod=c("Mod", "Sev"))
-full$Condition1 <- fct_collapse(full$Condition1, RRN=c("RRNn", "RRAn"), RRE=c("RRAe", "RRNe")) # join proximity to rail roads
-full <- subset(full,select=c(-Condition2)) # Almost all values are Norm
-full$RoofStyle <- fct_collapse(full$RoofStyle, Gable=c("Gable", "Shed")) # On Wikipedia are sinonyms
-full <- subset(full,select=c(-RoofMatl)) # Most Standard, hard to group
-full$Exterior1st <- fct_collapse(full$Exterior1st, Shng=c("AsbShng", "AsphShn"), Brk=c("BrkComm", "BrkFace"), Stucco=c("ImStucc", "Stucco"), Other=c("CBlock", "Stone"))
-full <- subset(full,select=c(-Exterior2nd)) # Value always equal to Exterior1st
-full$ExterCond <- fct_collapse(full$ExterCond, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
-full$BsmtCond <- fct_collapse(full$BsmtCond, BlA=c("Fa", "Po"), AbA=c("Gd")) # BlA = Below Average, AbA= Above Average
-full$Heating <- fct_collapse(full$Heating, FWF=c("Floor", "Wall")) # Merge wall and floor furnace
-full$HeatingQC <- fct_collapse(full$HeatingQC, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
-full$Electrical <- fct_collapse(full$Electrical, Standard="SBrkr", Other=c("FuseA", "FuseF", "FuseP", "Mix")) # Not sure about this one
+
+
+# Introduction
+
+## Purpose of this document
+
+The aim of this document is to summarise and apply what has been covered during the MAP535 course on a real case study. The case study we are interested in is the prediction of the price of a house in the city of Ames, Iowa, given a certain number of predictors.
+Even though the aim of such projects is to give the best possible model for prediction, we chose not to focus on this part because this is a part of data science which is already covered in other courses of this master. We will rather focus on model explainability as this is the main aspect of this course.
+
+## About the data
+
+The dataset we are provided with has the following characteristics : 
+
+- `r nrow(full)` rows (of which `r nrow(train)` for train and `r nrow(test)` for test) and `r ncol(full)` columns.
+- The column to predict is : `r y.colname`.
+- Number of missing values : `r sum(!complete.cases(full))`
+
+# Exploratory Data Analysis/Inital Modeling
+
+## Feature engineering
+
+### Column removal
+
+We notice that some categorical columns are not really useful.
+
+```{r Summary of deleted columns}
+summary.columns <- c("Utilities", "Street", "Condition2", "RoofMatl", "Exterior2nd")
+full.sum <- summary(full)
+m <- match(summary.columns, trimws(colnames(full.sum)))
+full.sum[, m]
+```
+
+We remvove Utilities, Street, Condition 2 and RoofMatl because it is not relevant, given the repartition of the levels of the factors. We remove Exterior2nd because it is always the same values as Exterior1st.
+
+### Attempt to reduce categories by grouping
+
+```{r Factors relevelling and deleting some features}
+# Condensed version
+full <- full %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
+test.list <- list(
+  Exterior1st = list("Shng" = c("AsbShng", "AsphShn"),"Brk" = c("BrkComm", "BrkFace"),"Stucco" = c("ImStucc", "Stucco"),"Other" = c("CBlock", "Stone")),
+  LotConfig = list("FR23" = c("FR2", "FR3")),
+  LandSlope = list("Mod" = c("Mod", "Sev")),
+  Condition1 = list("RRN" = c("RRNn", "RRAn"),"RRE" = c("RRAe", "RRNe")),
+  RoofStyle = list("Gable" = c("Gable", "Shed")), # On Wikipedia are sinonyms
+  ExterCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")), # BlA = Below Average, AbA= Above Average
+  BsmtCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd")),
+  Heating = list("FWF" = c("Floor", "Wall")), # Merge wall and floor furnace
+  HeatingQC = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
+  Electrical = list("Standard" = c("SBrkr"),"Other" = c("FuseA", "FuseF", "FuseP", "Mix")), # Not sure about this one
+  GarageQual = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
+  GarageCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex"))
+)
 # What about column Functional?
-full$GarageQual <- fct_collapse(full$GarageQual, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
-full$GarageCond <- fct_collapse(full$GarageCond, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
 # What about column SaleType and SaleCondition?
-cat(dim(full)) # 5 columns have been removed
-```
-Recreate modeled data
-```{r}
-full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
 
+# Adapting fct_collapse because it wasn't doing what I wanted.
+fct_collapse_perso <- function (.f, ..., group_other = FALSE) 
+{
+  new <- rlang::dots_list(...)[[1]][[1]]
+  levs <- as.list(unlist(new, use.names = FALSE))
+  if (group_other) {
+    f <- check_factor(.f)
+    levels <- levels(f)
+    new[["Other"]] <- levels[!levels %in% levs]
+    levs <- levels
+  }
+  names(levs) <- names(new)[rep(seq_along(new), vapply(new, 
+    length, integer(1)))]
+  fct_recode(.f, !!!levs)
+}
+
+# TODO find a way to do it with apply/lapply
+for(i in 1:length(test.list)){
+  full[[names(test.list)[i]]] <- fct_collapse_perso(full[[names(test.list)[i]]], list(test.list[[i]]))
+}
+new.full.dim <- dim(full)
+```
+
+We also changed the levels of the following columns to make them more homogeneous : `r names(test.list)`
+
+```{r Recreate modeled data}
+full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
+new.full.modeled.dim <- dim(full.modeled)
 train.modeled <- full.modeled %>%
   as.data.frame() %>% 
   filter(typetrain == 1) %>% 
@@ -105,23 +158,8 @@ test <- full %>%
   dplyr::select(-type)
 ```
 
+As we removed 5 columns, there is a bit less columns in the full data than before. But the most striking difference comes from the relevelling of the factors. On the dummified data, we went from `r old.full.modeled.dim[2]` to `r new.full.modeled.dim[2]` columns.
 
-# Introduction
-
-## Purpose of this document
-
-The aim of this document is to summarise and apply what has been covered during the MAP535 course on a real case study. The case study we are interested in is the prediction of the price of a house in the city of Ames, Iowa, given a certain number of predictors.
-Even though the aim of such projects is to give the best possible model for prediction, we chose not to focus on this part because this is a part of data science which is already covered in other courses of this master. We will rather focus on model explainability as this is the main aspect of this course.
-
-## About the data
-
-The dataset we are provided with has the following characteristics : 
-
-- `r nrow(full)` rows (of which `r nrow(train)` for train and `r nrow(test)` for test) and `r ncol(full)` columns.
-- The column to predict is : `r y.colname`.
-- Number of missing values : `r sum(!complete.cases(full))`
-
-# Exploratory Data Analysis/Inital Modeling
 
 ## Correlations
 
@@ -200,7 +238,9 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter 
 ```{r, fig.align='center'}
 corrplot::corrplot(cor(train.numeric))
 ```
+
 We have way too many features for the number of observations we have.
+
 ```{r}
 dim(train.modeled)
 ```
@@ -210,7 +250,7 @@ dim(train.modeled)
 
 An intuitive factor that comes to one's mind when thinking about the price of a house is the _neighbourhood_ in which it is located.
 
-```{r, Neighborhood boxplots, fig.height=4}
+```{r Neighborhood boxplots, fig.height=4}
 graphics::layout(
   matrix(c(1,2), 1, 2, byrow = TRUE),
   widths=c(2,1), 
@@ -249,14 +289,14 @@ The standardized residuals line is not horizontal here, it looks more like a par
 
 On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
 
-```{r}
+```{r Breusch Pagan}
 library(olsrr)
 ols_test_breusch_pagan(res.full.lm)
 ```
 
 Also the Breusch-Pagan test rejects the homoscedasticity hypothesis.
 
-```{r}
+```{r Logarithmic fit}
 trainlog  <- train %>% mutate(logSalePrice=log(SalePrice)) %>% subset(select= -c(SalePrice))
 
 res.full.log.lm <- lm(logSalePrice~., data = trainlog)
@@ -268,7 +308,7 @@ acf(residuals(res.full.log.lm), main = "")
 The log-transform of the response improves the diagnostic plots:
 the third plot shows now some improvement regarding homoscedasticity. We could work with that.
 
-```{r}
+```{r Breausch Pagan 2}
 ols_test_breusch_pagan(res.full.log.lm) 
 ```
 Problems of Heteroskedasticity:
@@ -278,16 +318,16 @@ Problems of Heteroskedasticity:
 
 ## Outlier analysis.
 
-```{r}
-car::influenceIndexPlot(res.full.lm)
+```{r InfluenceIndexPlot}
+# car::influenceIndexPlot(res.full.lm)
 ```
 
 
-```{r}
+```{r, OutlierTest}
 res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
 ```
 
-```{r}
+```{r, Outlier Data}
 train %>% summarise(avg = mean(SalePrice))
 train[as.numeric(names(res.outlier.test$p)), ]
 ```
@@ -302,16 +342,16 @@ We observe no Cook distance over 1 so we can, at first sight infer that there ar
 
 
 ```{r Variable selection}
-res.backward <- stepAIC(
-  res.full.lm,
-  ~.,
-  trace = F,
-  direction=c('backward')
-)
-nrow(summary(res.backward)$coefficients)
+# res.backward <- stepAIC(
+#   res.full.lm,
+#   ~.,
+#   trace = F,
+#   direction=c('backward')
+# )
+# nrow(summary(res.backward)$coefficients)
 ```
 
-```{r}
+```{r, elasticNetFit}
 predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0.01, lambda = c(1e5, .5e5, 32200, .25e5, 18000, 1e4, .5e4, 1e3, 1e2, 1e1, 1, 1e-1, 1e-2)){
   
   # Fit
@@ -352,31 +392,28 @@ plot(sqrt(pred.res$mse) ~ pred.res$lambda, log = "x", type = "o", main = "RMSE=f
 
 # Final Models
 
-
-
 # Discussion
 
-Uncomment to run, takes around 1 minute to run.
+Uncomment to run, takes around 30 seconds to run.
 
-```{r}
-res.caret <- caret::train(
-  x = train.modeled,
-  y = train.y,
-  method = "glmnet",
-  tuneGrid = expand.grid(
-    alpha = seq(0, 0.03, 0.002),
-    lambda = seq(0, 1e5, 1000)
-  ),
-  metric = "RMSE"
-)
-
+```{r, HyperParameter Tuning}
+# res.caret <- caret::train(
+#   x = train.modeled,
+#   y = train.y,
+#   method = "glmnet",
+#   tuneGrid = expand.grid(
+#     alpha = seq(0, 0.03, 0.002),
+#     lambda = seq(0, 1e5, 1000)
+#   ),
+#   metric = "RMSE"
+# )
 ```
 
-```{r}
-plot(res.caret)
+```{r, Plot of res}
+# plot(res.caret)
 ```
 
-```{r}
-res.caret$bestTune
+```{r, Optimal Parameters}
+# res.caret$bestTune
 ```
 
