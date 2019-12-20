@@ -24,7 +24,7 @@ theme_set(theme_bw())
 ### Loading the data set
 
 ```{r loading housing data}
-train <- read_csv(file = 'train_raw.csv')
+train <- read_csv(file = 'data/train_raw.csv')
 ```
 
 

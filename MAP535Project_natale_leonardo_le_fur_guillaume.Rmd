@@ -11,23 +11,33 @@ library(leaps)
 library(MASS)
 library(caret)
 library(dplyr)
+<<<<<<< HEAD
 library(car)
+=======
+library(lmtest)
+>>>>>>> 6c6d24ce1e67e588a268b4450e72bd6defd364f7
 knitr::opts_chunk$set(echo = FALSE)
 load("data/DataProject.RData")
 
+row.names(train) <- train$Id
+train <- subset(train,select=c(-Id))
+row.names(test) <- test$Id
+test <- subset(test,select=c(-Id))
+
 y.colname <- "SalePrice"
 train.y <- train %>% select(SalePrice) %>% "$"(SalePrice)
+train.x <- train %>% select(-SalePrice)
 
 test.x <- test %>% select(-SalePrice)
 test.y <- test %>% select(SalePrice) %>% "$"(SalePrice)
 
 full <- train %>% 
-  mutate(type = "train") %>%
+  mutate(type = "train") %>% # mutate creates a new variable
   rbind(test %>% mutate(type = "test")) %>% 
   transform(type = as.factor(type))
 
 
-full.modeled <- model.matrix(SalePrice ~ ., data = full)
+full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
 train.modeled <- full.modeled %>%
   as.data.frame() %>% 
   filter(typetrain == 1) %>% 
@@ -39,6 +49,62 @@ test.modeled <- full.modeled %>%
   select(-typetrain) %>% 
   as.matrix()
 ```
+Many Columns with low counts.
+```{r}
+summary(full)
+```
+# Attempt to reduce categories by grouping
+
+```{r}
+library(forcats)
+full <- subset(full,select=c(-Utilities)) # only 1 observation does not have everything
+full <- subset(full,select=c(-Street)) # Almost all values are Pave
+full$LotConfig <- fct_collapse(full$LotConfig, FR23 = c("FR2", "FR3")) # join 2 cat
+full$LandSlope <- fct_collapse(full$LandSlope, Mod=c("Mod", "Sev"))
+full$Condition1 <- fct_collapse(full$Condition1, RRN=c("RRNn", "RRAn"), RRE=c("RRAe", "RRNe")) # join proximity to rail roads
+full <- subset(full,select=c(-Condition2)) # Almost all values are Norm
+full$RoofStyle <- fct_collapse(full$RoofStyle, Gable=c("Gable", "Shed")) # On Wikipedia are sinonyms
+full <- subset(full,select=c(-RoofMatl)) # Most Standard, hard to group
+full$Exterior1st <- fct_collapse(full$Exterior1st, Shng=c("AsbShng", "AsphShn"), Brk=c("BrkComm", "BrkFace"), Stucco=c("ImStucc", "Stucco"), Other=c("CBlock", "Stone"))
+full <- subset(full,select=c(-Exterior2nd)) # Value always equal to Exterior1st
+full$ExterCond <- fct_collapse(full$ExterCond, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
+full$BsmtCond <- fct_collapse(full$BsmtCond, BlA=c("Fa", "Po"), AbA=c("Gd")) # BlA = Below Average, AbA= Above Average
+full$Heating <- fct_collapse(full$Heating, FWF=c("Floor", "Wall")) # Merge wall and floor furnace
+full$HeatingQC <- fct_collapse(full$HeatingQC, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
+full$Electrical <- fct_collapse(full$Electrical, Standard="SBrkr", Other=c("FuseA", "FuseF", "FuseP", "Mix")) # Not sure about this one
+# What about column Functional?
+full$GarageQual <- fct_collapse(full$GarageQual, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
+full$GarageCond <- fct_collapse(full$GarageCond, BlA=c("Fa", "Po"), AbA=c("Gd", "Ex")) # BlA = Below Average, AbA= Above Average
+# What about column SaleType and SaleCondition?
+cat(dim(full)) # 5 columns have been removed
+```
+Recreate modeled data
+```{r}
+full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
+
+train.modeled <- full.modeled %>%
+  as.data.frame() %>% 
+  filter(typetrain == 1) %>% 
+  dplyr::select(-typetrain) %>% 
+  as.matrix()
+
+test.modeled <- full.modeled %>%
+  as.data.frame() %>% 
+  filter(typetrain == 0) %>%
+  select(-typetrain) %>% 
+  as.matrix()
+
+train <- full %>%
+  as.data.frame() %>% 
+  filter(type == "train") %>% 
+  dplyr::select(-type)
+
+test <- full %>%
+  as.data.frame() %>% 
+  filter(type == "test") %>% 
+  dplyr::select(-type)
+```
+
 
 # Introduction
 
@@ -65,6 +131,7 @@ cor.threshold <- .7
 
 
 First, let's have a look at the correlations. As the correlation matrix is too big to be displayed, we are only pointing out the correlations that are above `r cor.threshold`.
+Should we do this on train_modeled?
 
 ```{r High Correlations function}
 train.numeric <- train %>% dplyr::select_if(is.numeric)
@@ -130,6 +197,14 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter 
     cat('\\end{figure}')
 ```
 
+```{r, fig.align='center'}
+corrplot::corrplot(cor(train.numeric))
+```
+We have way too many features for the number of observations we have.
+```{r}
+dim(train.modeled)
+```
+
 
 ## Factors
 
@@ -161,14 +236,10 @@ On the graph on the left, we plot the boxplot of the SalePrice for every Neighbo
 ```{r Full LM, warning=F}
 res.lm.intercept <- lm(SalePrice~1, data = train)
 res.full.lm <- lm(SalePrice~., data = train)
-```
-
-```{r}
 par(mfrow = c(2, 2))
 plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
 ```
-
 
 We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
 
@@ -177,6 +248,33 @@ We can observe that the normality hypothesis is not verified when we look at the
 The standardized residuals line is not horizontal here, it looks more like a parable. The homoscedasticity postulate is not verified.
 
 On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
+
+```{r}
+library(olsrr)
+ols_test_breusch_pagan(res.full.lm)
+```
+
+Also the Breusch-Pagan test rejects the homoscedasticity hypothesis.
+
+```{r}
+trainlog  <- train %>% mutate(logSalePrice=log(SalePrice)) %>% subset(select= -c(SalePrice))
+
+res.full.log.lm <- lm(logSalePrice~., data = trainlog)
+summary(res.full.lm)
+par(mfrow = c(2, 2))
+plot(res.full.log.lm, which = c(1, 2, 3))
+acf(residuals(res.full.log.lm), main = "")
+```
+The log-transform of the response improves the diagnostic plots:
+the third plot shows now some improvement regarding homoscedasticity. We could work with that.
+
+```{r}
+ols_test_breusch_pagan(res.full.log.lm) 
+```
+Problems of Heteroskedasticity:
+- The OLS estimators and regression predictions based on them remains unbiased and consistent.
+- The OLS estimators are no longer the BLUE (Best Linear Unbiased Estimators) because they are no longer efficient, so the regression predictions will be inefficient too.
+- Because of the inconsistency of the covariance matrix of the estimated regression coefficients, the tests of hypotheses, (t-test, F-test) are no longer valid.
 
 ## Outlier analysis.
 
