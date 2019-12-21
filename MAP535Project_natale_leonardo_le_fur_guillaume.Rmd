@@ -1,7 +1,7 @@
 ---
 title: "MAP535 Project"
 author: "Leonardo Natale - Guillaume Le Fur"
-date: "08/12/2019"
+date: "Fall 2019"
 output: pdf_document
 ---
 
@@ -10,45 +10,105 @@ library(plotly)
 library(leaps)
 library(MASS)
 library(caret)
+library(tibble)
 library(dplyr)
 library(car)
 library(lmtest)
 library(forcats)
+library(olsrr)
 
 knitr::opts_chunk$set(echo = FALSE)
 load("data/DataProject.RData")
+```
 
-row.names(train) <- train$Id
-train <- subset(train,select=c(-Id))
-row.names(test) <- test$Id
-test <- subset(test,select=c(-Id))
+```{r Data Preprocessing}
+rmses <- list() #Used to store our different RMSEs along the way.
+
+train <- train %>% column_to_rownames("Id")
+test <- test %>% column_to_rownames("Id")
 
 y.colname <- "SalePrice"
-train.y <- train %>% select(SalePrice) %>% "$"(SalePrice)
-train.x <- train %>% select(-SalePrice)
-
-test.x <- test %>% select(-SalePrice)
-test.y <- test %>% select(SalePrice) %>% "$"(SalePrice)
+train <- train %>% 
+  rename(
+    "FirstFlrSF" = "1stFlrSF", 
+    "SecondFlrSF" = "2ndFlrSF"
+  )
+test <- test %>% 
+  rename(
+    "FirstFlrSF" = "1stFlrSF", 
+    "SecondFlrSF" = "2ndFlrSF"
+  )
 
 full <- train %>% 
   mutate(type = "train") %>% # mutate creates a new variable
   rbind(test %>% mutate(type = "test")) %>% 
+  mutate_if(is.factor, as.factor) %>% 
   transform(type = as.factor(type))
 old.full.dim <- dim(full)
 
-full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
+model.data <- function(full){
+  train <- full %>%
+    as.data.frame() %>% 
+    filter(type == "train") %>% 
+    dplyr::select(-type)
+  
+  test <- full %>%
+    as.data.frame() %>% 
+    filter(type == "test") %>% 
+    dplyr::select(-type)
+
+  train.y <- train %>% 
+    select(SalePrice) %>%
+    "$"(SalePrice)
+  train.x <- train %>%
+    select(-SalePrice)
+  
+  test.x <- test %>% 
+    select(-SalePrice)
+  test.y <- test %>% 
+    select(SalePrice) %>% 
+    "$"(SalePrice) 
+
+  full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
+  train.modeled <- full.modeled %>%
+    as.data.frame() %>% 
+    filter(typetrain == 1) %>% 
+    dplyr::select(-typetrain) %>% 
+    as.matrix()
+  test.modeled <- full.modeled %>%
+    as.data.frame() %>% 
+    filter(typetrain == 0) %>%
+    select(-typetrain) %>% 
+    as.matrix()
+  list(
+    train = train,
+    train.x = train.x,
+    train.y = train.y,
+    test = test,
+    test.x = test.x,
+    test.y = test.y,
+    full.modeled = full.modeled,
+    train.modeled = train.modeled,
+    test.modeled = test.modeled
+  )
+}
+
+modeled.data <- model.data(full)
+
+full.modeled <- modeled.data$full.modeled
 old.full.modeled.dim <- dim(full.modeled)
 
-train.modeled <- full.modeled %>%
-  as.data.frame() %>% 
-  filter(typetrain == 1) %>% 
-  dplyr::select(-typetrain) %>% 
-  as.matrix()
-test.modeled <- full.modeled %>%
-  as.data.frame() %>% 
-  filter(typetrain == 0) %>%
-  select(-typetrain) %>% 
-  as.matrix()
+# Some are rendundant here but it's just to be estra sure that
+# the factor levels are the good ones.
+train.modeled <- modeled.data$train.modeled
+test.modeled <- modeled.data$test.modeled
+train <- modeled.data$train
+test <- modeled.data$test
+train.x <- modeled.data$train.x
+train.y <- modeled.data$train.y
+test <- modeled.data$test
+test.x <- modeled.data$test.x
+test.y <- modeled.data$test.y
 ```
 
 
@@ -88,8 +148,10 @@ We remvove Utilities, Street, Condition 2 and RoofMatl because it is not relevan
 ### Attempt to reduce categories by grouping
 
 ```{r Factors relevelling and deleting some features}
-# Condensed version
 full <- full %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
+train <- train %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
+test <- test %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
+
 test.list <- list(
   Exterior1st = list("Shng" = c("AsbShng", "AsphShn"),"Brk" = c("BrkComm", "BrkFace"),"Stucco" = c("ImStucc", "Stucco"),"Other" = c("CBlock", "Stone")),
   LotConfig = list("FR23" = c("FR2", "FR3")),
@@ -123,7 +185,7 @@ fct_collapse_perso <- function (.f, ..., group_other = FALSE)
   fct_recode(.f, !!!levs)
 }
 
-# TODO find a way to do it with apply/lapply
+# TODO Do it with apply/lapply
 for(i in 1:length(test.list)){
   full[[names(test.list)[i]]] <- fct_collapse_perso(full[[names(test.list)[i]]], list(test.list[[i]]))
 }
@@ -132,31 +194,44 @@ new.full.dim <- dim(full)
 
 We also changed the levels of the following columns to make them more homogeneous : `r names(test.list)`
 
-```{r Recreate modeled data}
-full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
-new.full.modeled.dim <- dim(full.modeled)
-train.modeled <- full.modeled %>%
-  as.data.frame() %>% 
-  filter(typetrain == 1) %>% 
-  dplyr::select(-typetrain) %>% 
-  as.matrix()
-
-test.modeled <- full.modeled %>%
-  as.data.frame() %>% 
-  filter(typetrain == 0) %>%
-  select(-typetrain) %>% 
-  as.matrix()
-
-train <- full %>%
-  as.data.frame() %>% 
-  filter(type == "train") %>% 
-  dplyr::select(-type)
-
-test <- full %>%
-  as.data.frame() %>% 
-  filter(type == "test") %>% 
-  dplyr::select(-type)
+```{r Feature eng reagarding y}
+full <- full %>% 
+  inner_join(
+    train %>% group_by(Neighborhood) %>% summarise(AvgNeighbourSalePrice = mean(SalePrice)),
+    by = "Neighborhood"
+  ) %>%
+  inner_join(
+    train %>% group_by(LotShape) %>% summarise(AvgLotShapeSalePrice = mean(SalePrice)),
+    by = "LotShape"
+  ) %>% 
+  inner_join(
+    train %>% group_by(OverallCond) %>% summarise(AvgOverallCondSalePrice = mean(SalePrice)),
+    by = "OverallCond"
+  ) %>% 
+    inner_join(
+    train %>% group_by(MSSubClass) %>% summarise(AvgMSSubClassSalePrice = mean(SalePrice)),
+    by = "MSSubClass"
+  )
 ```
+
+```{r Recreate modeled data}
+new.modeled.data <- model.data(full)
+
+full.modeled <- new.modeled.data$full.modeled
+new.full.modeled.dim <- dim(full.modeled)
+
+train.modeled <- new.modeled.data$train.modeled
+test.modeled <- new.modeled.data$test.modeled
+
+train <- new.modeled.data$train
+test <- new.modeled.data$test
+train.x <- new.modeled.data$train.x
+train.y <- new.modeled.data$train.y
+test <- new.modeled.data$test
+test.x <- new.modeled.data$test.x
+test.y <- new.modeled.data$test.y
+```
+
 
 As we removed 5 columns, there is a bit less columns in the full data than before. But the most striking difference comes from the relevelling of the factors. On the dummified data, we went from `r old.full.modeled.dim[2]` to `r new.full.modeled.dim[2]` columns.
 
@@ -239,12 +314,7 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter 
 corrplot::corrplot(cor(train.numeric))
 ```
 
-We have way too many features for the number of observations we have.
-
-```{r}
-dim(train.modeled)
-```
-
+We still have way too many features for the number of observations we have. (`r dim(train.modeled)`). We will need to do some variable selection afterwards to reduce the number of predictors.
 
 ## Factors
 
@@ -270,8 +340,9 @@ boxplot(vec.means, main = "Means of Neighborhoods")
 
 On the graph on the left, we plot the boxplot of the SalePrice for every Neighborhood. We notice that 3 neighborhood have noticeably higher values than the others. To check that, we use a boxplot of the averages of the SalePrice per Neighborhood and we see that only one value really stands out. The name of the coresponding Neighborhood is `r names(vec.means)[which.max(vec.means)]` 
 
-
 # Modeling and Diagnostics
+
+We start by fitting a linear model and try to validate the hypothesis inherent to the linear model.
 
 ```{r Full LM, warning=F}
 res.lm.intercept <- lm(SalePrice~1, data = train)
@@ -281,75 +352,168 @@ plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
 ```
 
-We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
-
-We can observe that the normality hypothesis is not verified when we look at the Q-Q plot, especilally for the tails of the distribution.
-
-The standardized residuals line is not horizontal here, it looks more like a parable. The homoscedasticity postulate is not verified.
-
-On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
+- We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
+- We can observe that the normality hypothesis is not verified when we look at the Q-Q plot, especilally for the tails of the distribution.
+- The standardized residuals line is not horizontal here, it looks more like a parable. The homoscedasticity postulate is not verified.
+- On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
 
 ```{r Breusch Pagan}
-library(olsrr)
-ols_test_breusch_pagan(res.full.lm)
+res.bp.test <- ols_test_breusch_pagan(res.full.lm)
 ```
 
-Also the Breusch-Pagan test rejects the homoscedasticity hypothesis.
+The p-value of the Breusch-Pagan test is `r res.bp.test$p`. Consequently, we reject the homoskedasticity hypothesis.
+
+In order to try to fix, or at least minimize, the heteroskedasticity of the data, we could try to take the log of the response variable.
 
 ```{r Logarithmic fit}
-trainlog  <- train %>% mutate(logSalePrice=log(SalePrice)) %>% subset(select= -c(SalePrice))
+trainlog  <- train.modeled %>%
+  as.data.frame() %>% 
+  cbind(data.frame(SalePrice = train.y)) %>% 
+  mutate(logSalePrice=log(SalePrice)) %>% 
+  select(-SalePrice)
 
 res.full.log.lm <- lm(logSalePrice~., data = trainlog)
-summary(res.full.lm)
+```
+
+```{r, warning = F}
+pred <- predict(
+  res.full.log.lm,
+  newdata = test.modeled %>%
+    as.data.frame()
+)
+rmses$log.lm <- sqrt(mean((exp(pred) - test.y)^2))
+```
+
+The log-transform of the response improves the diagnostic plots:
+
+```{r, warning = F}
 par(mfrow = c(2, 2))
 plot(res.full.log.lm, which = c(1, 2, 3))
 acf(residuals(res.full.log.lm), main = "")
 ```
-The log-transform of the response improves the diagnostic plots:
-the third plot shows now some improvement regarding homoscedasticity. We could work with that.
+
+the third plot shows now some improvement regarding homoscedasticity. We could work with this model instead.
 
 ```{r Breausch Pagan 2}
-ols_test_breusch_pagan(res.full.log.lm) 
+res.bp.test2 <- ols_test_breusch_pagan(res.full.log.lm) 
 ```
-Problems of Heteroskedasticity:
+
+Even though it looks better, the p-value of the Breusch-Pagan test on this model is `r res.bp.test2$p`. It is a bit higher but we still reject the homoskedasticity hipothesis.
+
+The issues raised by heteroskedasticity are the following :
 - The OLS estimators and regression predictions based on them remains unbiased and consistent.
 - The OLS estimators are no longer the BLUE (Best Linear Unbiased Estimators) because they are no longer efficient, so the regression predictions will be inefficient too.
 - Because of the inconsistency of the covariance matrix of the estimated regression coefficients, the tests of hypotheses, (t-test, F-test) are no longer valid.
 
 ## Outlier analysis.
 
-```{r InfluenceIndexPlot}
-# car::influenceIndexPlot(res.full.lm)
-```
-
-
-```{r, OutlierTest}
-res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
-```
-
-```{r, Outlier Data}
-train %>% summarise(avg = mean(SalePrice))
-train[as.numeric(names(res.outlier.test$p)), ]
-```
-
+### Cook's distance plot
 
 ```{r Cooks distance, warning=F}
 plot(res.full.lm, which = 5)
 ```
 
-
 We observe no Cook distance over 1 so we can, at first sight infer that there are no outliers. A more detailed outlier analysis is still necessary to be more confident about that.
 
+### Outlier detection
+
+We want to determine wether there are outliers in our data.
+
+```{r InfluenceIndexPlot}
+car::influenceIndexPlot(res.full.lm, vars=c("Cook", "Studentized", "hat"))
+```
+
+### OutlierTest
+
+```{r, OutlierTest}
+res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
+outliers.index <- paste(names(res.outlier.test$p), collapse = ", ")
+```
+
+The index of the outliers pointed out by the test are `r outliers.index`
+
+## Model Tuning
+
+### Variable Selection
+
+We use a stepwise method with the BIC criterion to determine the best model to use.
 
 ```{r Variable selection}
-# res.backward <- stepAIC(
-#   res.full.lm,
-#   ~.,
-#   trace = F,
-#   direction=c('backward')
-# )
-# nrow(summary(res.backward)$coefficients)
+res.backward <- stepAIC(
+  res.full.lm,
+  SalePrice~1,
+  trace = F,
+  k = log(nrow(train)),
+  direction=c('backward')
+)
 ```
+
+```{r, warning = F}
+bic.kept.columns <- rownames(summary(res.backward)$coefficients)
+bic.lm.res <- lm(
+  SalePrice~.,
+  data = train.modeled %>%
+    as.data.frame() %>% 
+    select(bic.kept.columns) %>%
+    cbind(data.frame(SalePrice = train.y))
+)
+pred <- predict(
+  bic.lm.res, 
+  newdata = test.modeled[, rownames(summary(res.backward)$coefficients)] %>% as.data.frame()
+)
+rmses$bic.model <- sqrt(mean((pred - test.y)^2))
+```
+
+```{r}
+as.data.frame(summary(res.backward)$coefficients) %>%
+  rownames_to_column("colname") %>%
+  rename("prob" = "Pr(>|t|)") %>%
+  arrange(prob) %>%
+  slice(1:15) %>%
+  column_to_rownames("colname") %>% 
+  select(prob)
+```
+
+
+### Hyper-parameter tuning
+
+Uncomment to run, takes around 30 seconds to run.
+
+```{r HyperParameter Tuning, warning = F}
+res.caret <- caret::train(
+  x = train.modeled,
+  y = train.y,
+  method = "glmnet",
+  tuneGrid = expand.grid(
+    alpha = seq(0, 0.03, 0.002),
+    lambda = seq(0, 1e5, 1000)
+  ),
+  metric = "RMSE"
+)
+```
+
+```{r, Plot of res}
+# plot(res.caret)
+```
+
+```{r, Optimal Parameters}
+res.caret$bestTune
+
+# test.data <- test.modeled %>% 
+#   cbind(test.y) %>% 
+#   `colnames<-`(c(colnames(test.modeled), "SalePrice")) %>% 
+#   colnames()
+
+optimal.model <- glmnet::glmnet(
+  x = train.modeled, 
+  y = train.y, 
+  alpha = res.caret$bestTune$alpha, 
+  lambda = res.caret$bestTune$lambda
+)
+res.pred.glmnet <- predict(optimal.model, newx = test.modeled) - test.y
+sqrt(mean(res.pred.glmnet^2))
+```
+
 
 ```{r, elasticNetFit}
 predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0.01, lambda = c(1e5, .5e5, 32200, .25e5, 18000, 1e4, .5e4, 1e3, 1e2, 1e1, 1, 1e-1, 1e-2)){
@@ -386,34 +550,68 @@ pred.res <- predict.elsaticnet(
   test.x = test.modeled, 
   test.y = test.y
 )
-plot(sqrt(pred.res$mse) ~ pred.res$lambda, log = "x", type = "o", main = "RMSE=f(lambda)", xlab="lambda", ylab="RMSE")
+# plot(sqrt(pred.res$mse) ~ pred.res$lambda, log = "x", type = "o", main = "RMSE=f(lambda)", xlab="lambda", ylab="RMSE")
 ```
 
+### Anova
+
+```{r}
+anova.full <- anova(res.full.lm)
+as.data.frame(anova.full) %>% 
+  rownames_to_column("rown") %>% 
+  rename("prob" = "Pr(>F)") %>% 
+  filter(prob < 0.001) %>% 
+  select(prob, rown) %>% 
+  arrange(prob) %>% 
+  slice(1:5) %>% 
+  column_to_rownames("rown") 
+```
+
+The output of the Anova makes a lot of sense. Indeed, the most signifcant variables are the ones that comes to one's mind when estiamting the price of a house : Type of building sold (MSSubClass), Neighborhood where the place is located, Overall quality of the good, the area of the place and the linear feet of street connected to property.
 
 # Final Models
 
+```{r}
+library(randomForest)
+randomForest::randomForest(x = train.modeled, y = train.y, xtest = test.modeled, ytest = test.y)
+```
+
+```{r}
+gbm.res <- gbm::gbm(
+  SalePrice ~ ., 
+  data = train.x %>% cbind(data.frame(SalePrice = train.y)),
+    # train.modeled %>%
+    # as.data.frame() %>%
+    # cbind(data.frame(SalePrice = train.y)),
+  distribution = "gaussian",
+  n.trees = 500,
+  interaction.depth	= 2,
+  n.minobsinnode = 10,
+  cv.folds = 5
+)
+pred <- predict(gbm.res, newdata = test.x, n.trees = 500) - test.y
+sqrt(mean(pred^2))
+```
+
+```{r}
+xgboost.res <- xgboost::xgboost(
+  data = train.modeled,
+  label = train.y,
+  nrounds = 100,
+  verbose = 0
+)
+pred <- predict(xgboost.res, newdata = test.modeled) - test.y
+sqrt(mean(pred^2))
+```
+
+
+```{r}
+data.frame(Model = names(rmses), RMSE = unlist(rmses))
+```
+
+
 # Discussion
 
-Uncomment to run, takes around 30 seconds to run.
+If we had had more rows, we could have kept more columns and have a better model. Is it relevant to say that?
 
-```{r, HyperParameter Tuning}
-# res.caret <- caret::train(
-#   x = train.modeled,
-#   y = train.y,
-#   method = "glmnet",
-#   tuneGrid = expand.grid(
-#     alpha = seq(0, 0.03, 0.002),
-#     lambda = seq(0, 1e5, 1000)
-#   ),
-#   metric = "RMSE"
-# )
-```
-
-```{r, Plot of res}
-# plot(res.caret)
-```
-
-```{r, Optimal Parameters}
-# res.caret$bestTune
-```
 
