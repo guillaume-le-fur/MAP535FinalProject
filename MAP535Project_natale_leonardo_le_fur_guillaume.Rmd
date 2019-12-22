@@ -73,7 +73,7 @@ hist(full$SalePrice, breaks = 100, main = "Histogram of SalePrice", xlab = "Sale
 hist(log(full$SalePrice), breaks = 100, main = "Histogram of SalePrice", xlab = "log(SalePrice)", ylab = "Frequency")
 # boxplot(full$SalePrice, boxwex = 0.7, main = "", ylab = "SalePrice")
 ```
-The distribution of _SalePrice_ has a highly positive skewness. Plotting the distribution on the log scale transforms our skewed data to approximately conform to normality
+The distribution of _SalePrice_ has a highly positive skewness. Plotting the distribution on the log scale transforms our skewed data to approximately conform to normality.
 
 ```{r SalePrice Condition scatterplot, fig.height=3}
 par(mfrow = c(1,2))
@@ -81,7 +81,7 @@ with(full, plot(OverallCond, SalePrice))
 with(full, plot(GrLivArea, SalePrice))
 ```
 
-Intuitively, "Overall Condition" and  "Above Ground Living Area Square Feet" are two important indicators of "Sale Price". The pattern is clear for the latter, while the former is less obvious and there are many high values of _SalePrice_ for average values of _OveralCond_. This could reflects other factor such as the house location.
+Intuitively, "Overall Condition" and  "Above Ground Living Area Square Feet" are two important indicators of "Sale Price". The pattern is clear for the latter, while the former is less obvious and there are many high values of _SalePrice_ for average values of _OverallCond_. This could reflects other factor such as the house location.
 
 ```{r Neighborhood boxplots, fig.height=3}
 graphics::layout(
@@ -101,7 +101,7 @@ names(vec.means) <- df.means$Neighborhood
 boxplot(vec.means, main = "Means of Neighborhoods")
 ```
 Another intuitive factor that comes to mind when thinking about the price of a house is its neighbourhood.
-The graph on the left shows the boxplot of the SalePrice for every Neighborhood. Three neighborhood have noticeably higher values than the others. The boxplot on the right helps us checking as it plots the averages of the SalePrice per Neighborhood. Only one value really stands out and the name of the coresponding Neighborhood is `r names(vec.means)[which.max(vec.means)]`.
+The graph on the left shows the boxplot of the _SalePrice_ for every _Neighborhood._ Three neighborhood have noticeably higher values than the others. The boxplot on the right helps us checking as it plots the averages of the _SalePrice_ per Neighborhood. Only one value really stands out and the name of the coresponding _Neighborhood_ is `r names(vec.means)[which.max(vec.means)]`.
 
 # Data Manipulation
 
@@ -166,7 +166,7 @@ for(i in 1:length(test.list)){
 new.full.dim <- dim(full)
 ```
 
-We also created new features based on aggregations of the response variable by some of the predictors. We computed the average SalePrice per : Neighborhood, LotShape, OverallCond and MSSubClass.
+We also created new features based on aggregations of the response variable by some of the predictors. We computed the average _SalePrice_ per : _Neighborhood_, _LotShape_, _OverallCond_ and _MSSubClass_.
 
 ```{r Feature eng reagarding y}
 full <- full %>% 
@@ -220,7 +220,7 @@ With this approach, we transition from `r old.full.modeled.dim[2]` to `r new.ful
 cor.threshold <- .7
 ```
 
-But even though this method allowed us to reduce significantly our number of columns, we still have to many columns to plot a correlation matrix. Therefore, we display only correlations that are above the value `r cor.threshold`.
+But even though this method allowed us to reduce significantly our number of columns, we still have to many columns to plot a correlation matrix. The two tables below show correlations value above `r cor.threshold`. On the right, the features most correlated to _SalePrice_ are displayed.
 
 ```{r High Correlations function}
 train.numeric <- train %>% dplyr::select_if(is.numeric)
@@ -286,7 +286,6 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter 
     cat('\\end{figure}')
 ```
 
-_AvgNeighbourSalePrice_ is a new feature obtained by grouping data by _SalePrice_ and calculating the mean. 
 It is very interesting to see how _GarageArea_ and _GarageCars_ are important to Americans when determing house prices. The _OverallQual_ is also very considered, together with the _GrLivArea_. 
 
 We still have a high number of features for the number of observations(`r dim(train.modeled)`). We will later perform some variable selection to reduce the number of predictors.
@@ -303,7 +302,7 @@ plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
 ```
 
-P1) In the Residual vs Fitted plot help us the residual line is almost horizontal at zero. Thus, we can deduce that centered errors postulate is met.
+P1) In the Residual vs Fitted plot, the residual line is almost horizontal at zero. Thus, we can deduce that centered errors postulate is met.
 
 P2) The homoscedasticity postulate is not verified as the standardized residuals line is not horizontal with equally spread points. It looks more like a parable. Also, the p-value of the _Breusch-Pagan_ test is `r ols_test_breusch_pagan(res.full.lm)$p`, rejecting the homoskedasticity hypothesis.
 
@@ -347,7 +346,7 @@ The issues raised by heteroskedasticity are the following:
 
 - The OLS estimators and regression predictions based on them remains unbiased and consistent.
 - The OLS estimators are no longer the BLUE (Best Linear Unbiased Estimators) because they are no longer efficient, so the regression predictions will be inefficient too.  
-- Because of the inconsistency of the covariance matrix of the estimated regression coefficients, the tests of hypotheses, (t-test, F-test) are no longer valid.
+<!-- - Because of the inconsistency of the covariance matrix of the estimated regression coefficients, the tests of hypotheses, (t-test, F-test) are no longer valid. -->
 
 ### Outlier analysis.
 
