@@ -295,11 +295,18 @@ We still have a high number of features for the number of observations(`r dim(tr
 We start by fitting a linear model and try to validate the hypothesis inherent to the linear model.
 
 ```{r Full LM, warning=F}
-res.lm.intercept <- lm(SalePrice~1, data = train)
-res.full.lm <- lm(SalePrice~., data = train)
+res.lm.intercept <- lm(SalePrice~1, data = train.modeled %>% cbind(train %>% select(SalePrice)))
+res.full.lm <- lm(SalePrice~., data = train.modeled %>% cbind(train %>% select(SalePrice)))
 par(mfrow = c(2, 2))
 plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
+
+pred <- predict(
+  res.full.lm,
+  newdata = test.modeled %>%
+    as.data.frame()
+)
+rmses$Linear.model <- sqrt(mean((pred - test$SalePrice)^2))
 ```
 
 P1) In the Residual vs Fitted plot, the residual line is almost horizontal at zero. Thus, we can deduce that centered errors postulate is met.
@@ -539,8 +546,9 @@ We can also notice that penalization doesn't make ou model better, which can loo
 
 Because they are not being considered in this course, we do not keep random forests or gradient boosting models as our final model, we choose to keep the linear model with the log of the response variable as our final model because it is a good compromise between explainability and perfromance.
 
-# Discussion
+# Conclusion
 
 This project was a good opportunity to put what we have learnt this semester into practice and also to become more at ease with R. Rather than a pure data science project, aiming at having the model with the best score, it was interesting to focus on other important aspects such as outlier analysis or variable selection.
 We have built a model that is pretty robust, which does not contain too many predictors and that has a satisfying RMSE.
+
 It would have been nice to have more rows in the data set to be able to obtain more robust models.
