@@ -22,7 +22,6 @@ library(randomForest)
 
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 load("data/DataProject.RData")
-load("heavy_runs.RData")
 ```
 
 ```{r Data Preprocessing}
@@ -386,7 +385,7 @@ After analysis, it seems that this points are not really outliers because half o
 
 We use a stepwise method with the BIC criterion to determine the best model to use.
 
-```{r Variable selection, eval=F, include = F}
+```{r Variable selection}
 res.backward <- stepAIC(
   res.full.log.lm,
   SalePrice~1,
@@ -437,7 +436,7 @@ After some tests, we use the following intervals for the gridsearch :
 - $\alpha \in [0, 0.03]$ - step : 0.002
 - $\lambda \in [0, 1.10^5]$ - step : 1000
 
-```{r HyperParameter Tuning, warning = F, eval = F, include = F}
+```{r HyperParameter Tuning, warning = F}
 res.caret <- caret::train(
   x = train.modeled,
   y = train$SalePrice,
@@ -550,6 +549,29 @@ The model obtained with the BIC criterion doesn't have a really good performance
 We can also notice that penalization doesn't make ou model better, which can look surprising.
 
 Because they are not being considered in this course, we do not keep random forests or gradient boosting models as our final model, we choose to keep the linear model with the log of the response variable as our final model because it is a good compromise between explainability and perfromance.
+
+The final model we chose is too big for us to display all the estimates on this page but it has the following characteristics:
+
+```{r}
+smry <- summary(res.full.log.lm)
+str1 <- paste("Residual standard error:", smry$sigma, "on", smry$df[2] ,"degrees of freedom", collapse = " ")
+str2 <- paste("Multiple R-squared:", smry$r.squared, ", Adjusted R-squared:", smry$adj.r.squared, collapse = " ")
+str3 <- paste("F-statistic:", smry$fstatistic[1], "on", smry$df[1] - 1, "and", smry$df[2], "DF, p-value: < 2.2e-16",  collapse = "")
+
+cat(
+paste(
+  "Call: ",
+  paste("lm(formula = ", paste(smry$call[2], collapse = " "), ", data = ", smry$call[3], ")", sep = ""),
+  "",
+  str1,
+  str2,
+  str3,
+  sep = "\n",
+  collapse = "\n"
+)
+)
+```
+
 
 # Conclusion
 
