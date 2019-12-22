@@ -112,30 +112,57 @@ test.y <- modeled.data$test.y
 ```
 
 
+We are interested in predicting house prices in Ames, Iowa given several descriptive features.
 
-# Introduction
+Our goal is to come up with the best possible model and to master the techniques covered in class by providing a step-by-step solution which could be easily interpretable and adopted as a solid base for future projects.     
 
-## Purpose of this document
+# Data Exploration
 
-The aim of this document is to summarise and apply what has been covered during the MAP535 course on a real case study. The case study we are interested in is the prediction of the price of a house in the city of Ames, Iowa, given a certain number of predictors.
-Even though the aim of such projects is to give the best possible model for prediction, we chose not to focus on this part because this is a part of data science which is already covered in other courses of this master. We will rather focus on model explainability as this is the main aspect of this course.
-
-## About the data
-
-The dataset we are provided with has the following characteristics : 
+The dataset is composed of: 
 
 - `r nrow(full)` rows (of which `r nrow(train)` for train and `r nrow(test)` for test) and `r ncol(full)` columns.
 - The column to predict is : `r y.colname`.
 - Number of missing values : `r sum(!complete.cases(full))`
 
-# Exploratory Data Analysis/Inital Modeling
+```{r SalePrice graphs, fig.height=4}
+par(mfrow = c(1,2))
 
-## Feature engineering
+hist(full$SalePrice, breaks = 100, main = "Histogram of SalePrice", xlab = "SalePrice", ylab = "Frequency")
+hist(log(full$SalePrice), breaks = 100, main = "Histogram of SalePrice", xlab = "log(SalePrice)", ylab = "Frequency")
+# boxplot(full$SalePrice, boxwex = 0.7, main = "", ylab = "SalePrice")
+```
+The distribution of _SalePrice_ has a highly positive skewness. Plotting the distribution on the log scale transforms our skewed data to approximately conform to normality
 
-### Column removal
+```{r SalePrice Condition scatterplot, fig.height=4}
+par(mfrow = c(1,2))
+with(full, plot(OverallCond, SalePrice))
+with(full, plot(GrLivArea, SalePrice))
+```
+Intuitively, "Overall Condition" and  "Above Ground Living Area Square Feet" are two important indicators of "Sale Price". The pattern is clear for the latter, while the former is less obvious and there are many high values of _SalePrice_ for average values of _OveralCond_. This could reflects other factor such as the house location.
 
-We notice that some categorical columns are not really useful.
+```{r Neighborhood boxplots, fig.height=4}
+graphics::layout(
+  matrix(c(1,2), 1, 2, byrow = TRUE),
+  widths=c(2,1), 
+  heights=c(1,1)
+)
 
+boxplot(
+  SalePrice ~ Neighborhood, 
+  data = full,
+  main = "SalePrice per Neighborhood"
+)
+df.means <- full %>% group_by(Neighborhood) %>% summarise(avg = mean(SalePrice))
+vec.means = df.means$avg
+names(vec.means) <- df.means$Neighborhood
+boxplot(vec.means, main = "Means of Neighborhoods")
+```
+Another intuitive factor that comes to mind when thinking about the price of a house is its neighbourhood.
+The graph on the left shows the boxplot of the SalePrice for every Neighborhood. Three neighborhood have noticeably higher values than the others. The boxplot on the right helps us checking as it plots the averages of the SalePrice per Neighborhood. Only one value really stands out and the name of the coresponding Neighborhood is `r names(vec.means)[which.max(vec.means)]`.
+
+# Data Manipulation
+
+We have noticed how the following categorical columns do not add much value to our data.
 ```{r Summary of deleted columns}
 summary.columns <- c("Utilities", "Street", "Condition2", "RoofMatl", "Exterior2nd")
 full.sum <- summary(full)
@@ -143,10 +170,14 @@ m <- match(summary.columns, trimws(colnames(full.sum)))
 full.sum[, m]
 ```
 
-We remvove Utilities, Street, Condition 2 and RoofMatl because it is not relevant, given the repartition of the levels of the factors. We remove Exterior2nd because it is always the same values as Exterior1st.
+The columns _Utilities_, _Street_, _Condition2_ and _RoofMatl_ have been removed as almost all of our observations fall into one particular class. _Exterior2nd_ has been dropped because it presents the same values as _Exterior1st_.
 
-### Attempt to reduce categories by grouping
+Following a closer look at each feature, we noticed how some factor levels are very underrepresented. This could raise flags when divinding into training and test data: with a random split, some factor levels which appear only a few times, could end all in the test data, resulting in a column of only 1s in our train data.  
 
+Our solution consists in gathering more information on the different categories and group them when possible. For instance, "Gable" and "Shed" are very similar kinds of _RoofStyle_ and thus have been encoded into one level.
+Levels in factors expressing conditions, have been grouped according to their grade: "Good" and "Excellent" become "Above Average".
+
+A more elegant solution could consist in forcing each category to be represented in both training and test.
 ```{r Factors relevelling and deleting some features}
 full <- full %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
 train <- train %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
@@ -162,7 +193,7 @@ test.list <- list(
   BsmtCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd")),
   Heating = list("FWF" = c("Floor", "Wall")), # Merge wall and floor furnace
   HeatingQC = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
-  Electrical = list("Standard" = c("SBrkr"),"Other" = c("FuseA", "FuseF", "FuseP", "Mix")), # Not sure about this one
+  Electrical = list("Standard" = c("SBrkr"),"Other" = c("FuseA", "FuseF", "FuseP", "Mix")),
   GarageQual = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
   GarageCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex"))
 )
@@ -191,8 +222,6 @@ for(i in 1:length(test.list)){
 }
 new.full.dim <- dim(full)
 ```
-
-We also changed the levels of the following columns to make them more homogeneous : `r names(test.list)`
 
 ```{r Feature eng reagarding y}
 full <- full %>% 
@@ -232,20 +261,11 @@ test.x <- new.modeled.data$test.x
 test.y <- new.modeled.data$test.y
 ```
 
-
-As we removed 5 columns, there is a bit less columns in the full data than before. But the most striking difference comes from the relevelling of the factors. On the dummified data, we went from `r old.full.modeled.dim[2]` to `r new.full.modeled.dim[2]` columns.
-
-
-## Correlations
-
+With this approach, we transition from `r old.full.modeled.dim[2]` to `r new.full.modeled.dim[2]` columns.
 ```{r Correlation threshold definition}
 cor.threshold <- .7
 ```
-
-
-First, let's have a look at the correlations. As the correlation matrix is too big to be displayed, we are only pointing out the correlations that are above `r cor.threshold`.
-Should we do this on train_modeled?
-
+We still have to many columns to plot a correlation matrix. Therefore, we display only correlations that are above the value `r cor.threshold`.
 ```{r High Correlations function}
 train.numeric <- train %>% dplyr::select_if(is.numeric)
 cor.train <- cor(train.numeric)
@@ -309,36 +329,10 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter 
     cat('\\end{center}')
     cat('\\end{figure}')
 ```
+_AvgNeighbourSalePrice_ is a new feature obtained by grouping data by _SalePrice_ and calculating the mean. 
+It is very interesting to see how _GarageArea_ and _GarageCars_ are important to Americans when determing house prices. The _OverallQual_ is also very considered, together with the _GrLivArea_. 
 
-```{r, fig.align='center'}
-corrplot::corrplot(cor(train.numeric))
-```
-
-We still have way too many features for the number of observations we have. (`r dim(train.modeled)`). We will need to do some variable selection afterwards to reduce the number of predictors.
-
-## Factors
-
-An intuitive factor that comes to one's mind when thinking about the price of a house is the _neighbourhood_ in which it is located.
-
-```{r Neighborhood boxplots, fig.height=4}
-graphics::layout(
-  matrix(c(1,2), 1, 2, byrow = TRUE),
-  widths=c(2,1), 
-  heights=c(1,1)
-)
-
-boxplot(
-  SalePrice ~ Neighborhood, 
-  data = full,
-  main = "SalePrice per Neighborhood"
-)
-df.means <- full %>% group_by(Neighborhood) %>% summarise(avg = mean(SalePrice))
-vec.means = df.means$avg
-names(vec.means) <- df.means$Neighborhood
-boxplot(vec.means, main = "Means of Neighborhoods")
-```
-
-On the graph on the left, we plot the boxplot of the SalePrice for every Neighborhood. We notice that 3 neighborhood have noticeably higher values than the others. To check that, we use a boxplot of the averages of the SalePrice per Neighborhood and we see that only one value really stands out. The name of the coresponding Neighborhood is `r names(vec.means)[which.max(vec.means)]` 
+We still have a high number of features for the number of observations(`r dim(train.modeled)`). We will perform some variable selection to reduce the number of predictors.
 
 # Modeling and Diagnostics
 
@@ -352,16 +346,14 @@ plot(res.full.lm, which = c(1, 2, 3))
 acf(residuals(res.full.lm), main = "")
 ```
 
-- We can see that the residual line is almost horizontal. We can deduce that postulate stating that the errors are centered is satisfied.
-- We can observe that the normality hypothesis is not verified when we look at the Q-Q plot, especilally for the tails of the distribution.
-- The standardized residuals line is not horizontal here, it looks more like a parable. The homoscedasticity postulate is not verified.
-- On the autocorrelation plot, we observe only one value being over the threshold but it's not high enough to question the uncorrelation of the errors. Thus, we can say that the errors are uncorrelated.
+P1) In the Residual vs Fitted plot help us the residual line is almost horizontal at zero. Thus, we can deduce that centered errors postulate is met.
 
-```{r Breusch Pagan}
-res.bp.test <- ols_test_breusch_pagan(res.full.lm)
-```
+P2) The homoscedasticity postulate is not verified as the standardized residuals line is not horizontal with equally spread points. It looks more like a parable. Also, the p-value of the _Breusch-Pagan_ test is `r ols_test_breusch_pagan(res.full.lm)$p`, rejecting the homoskedasticity hypothesis.
 
-The p-value of the Breusch-Pagan test is `r res.bp.test$p`. Consequently, we reject the homoskedasticity hypothesis.
+P3) On the autocorrelation plot, only one value is over the threshold but it is not high enough to question the uncorrelation of the errors. The _DurbinWatsonTest_ returns a p-value of `r durbinWatsonTest(res.full.lm)$p` and confirms that the errors are uncorrelated.
+
+P4) The normality hypothesis is not verified when we look at the Q-Q plot, especially for the tails of the distribution. The result is confirmed by the _ShapiroTest_, which return a p-value of `r shapiro.test(residuals(res.full.lm))$p`.
+
 
 In order to try to fix, or at least minimize, the heteroskedasticity of the data, we could try to take the log of the response variable.
 
@@ -392,45 +384,30 @@ plot(res.full.log.lm, which = c(1, 2, 3))
 acf(residuals(res.full.log.lm), main = "")
 ```
 
-the third plot shows now some improvement regarding homoscedasticity. We could work with this model instead.
+The third plot shows now some improvement regarding homoscedasticity and we could work with this model instead. However, it is important to know th p-value of the _Breusch-Pagan_ test on this model is `r ols_test_breusch_pagan(res.full.log.lm)$p`. It is a bit higher but we still reject the homoskedasticity hipothesis.
 
-```{r Breausch Pagan 2}
-res.bp.test2 <- ols_test_breusch_pagan(res.full.log.lm) 
-```
+The issues raised by heteroskedasticity are the following:
 
-Even though it looks better, the p-value of the Breusch-Pagan test on this model is `r res.bp.test2$p`. It is a bit higher but we still reject the homoskedasticity hipothesis.
-
-The issues raised by heteroskedasticity are the following :
 - The OLS estimators and regression predictions based on them remains unbiased and consistent.
-- The OLS estimators are no longer the BLUE (Best Linear Unbiased Estimators) because they are no longer efficient, so the regression predictions will be inefficient too.
+- The OLS estimators are no longer the BLUE (Best Linear Unbiased Estimators) because they are no longer efficient, so the regression predictions will be inefficient too.  
 - Because of the inconsistency of the covariance matrix of the estimated regression coefficients, the tests of hypotheses, (t-test, F-test) are no longer valid.
 
-## Outlier analysis.
-
-### Cook's distance plot
+### Outlier analysis.
 
 ```{r Cooks distance, warning=F}
 plot(res.full.lm, which = 5)
 ```
-
-We observe no Cook distance over 1 so we can, at first sight infer that there are no outliers. A more detailed outlier analysis is still necessary to be more confident about that.
-
-### Outlier detection
-
-We want to determine wether there are outliers in our data.
+We observe points with Cook distance greater than 1 so we can, at first sight, infer that there are no outliers. However, a more detailed outlier analysis is still necessary.
 
 ```{r InfluenceIndexPlot}
-car::influenceIndexPlot(res.full.lm, vars=c("Cook", "Studentized", "hat"))
+car::influenceIndexPlot(res.full.lm, vars=c("Studentized", "hat"))
 ```
-
-### OutlierTest
-
+The first plot makes it possible to identify outliers, many observations seem doubtful. The second plot shows the presence of many leverage points (with hate values above 0.5).
 ```{r, OutlierTest}
 res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
 outliers.index <- paste(names(res.outlier.test$p), collapse = ", ")
 ```
-
-The index of the outliers pointed out by the test are `r outliers.index`
+We consider necessary to perform a Bonferroni _OutlierTest_ to identify outliers. The following points are labeled as such by the test: `r outliers.index`.
 
 ## Model Tuning
 
@@ -440,13 +417,18 @@ We use a stepwise method with the BIC criterion to determine the best model to u
 
 ```{r Variable selection}
 res.backward <- stepAIC(
-  res.full.lm,
+  res.full.log.lm,
   SalePrice~1,
   trace = F,
   k = log(nrow(train)),
   direction=c('backward')
 )
 ```
+
+```{r}
+summary(res.backward)
+```
+
 
 ```{r, warning = F}
 bic.kept.columns <- rownames(summary(res.backward)$coefficients)

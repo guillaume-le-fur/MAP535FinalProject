@@ -1,0 +1,172 @@
+---
+title: "MAP535 Project"
+author: "Leonardo Natale - Guillaume Le Fur"
+date: "Fall 2019"
+output: pdf_document
+---
+
+```{r Setup chunk, include=FALSE}
+library(plotly)
+library(leaps)
+library(MASS)
+library(caret)
+library(tibble)
+library(dplyr)
+library(car)
+library(lmtest)
+library(forcats)
+library(olsrr)
+
+knitr::opts_chunk$set(echo = FALSE)
+load("data/DataProject.RData")
+```
+
+```{r Data Preprocessing}
+rmses <- list() #Used to store our different RMSEs along the way.
+
+train <- train %>% column_to_rownames("Id")
+test <- test %>% column_to_rownames("Id")
+
+full <- train %>%  # train and test together
+  mutate(type = "train") %>% 
+  rbind(test %>% mutate(type = "test")) %>% 
+  transform(type = as.factor(type))
+```
+
+
+```{r Factors relevelling and deleting some features}
+full <- full %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
+
+test.list <- list(
+  Exterior1st = list("Shng" = c("AsbShng", "AsphShn"),"Brk" = c("BrkComm", "BrkFace"),"Stucco" = c("ImStucc", "Stucco"),"Other" = c("CBlock", "Stone")),
+  LotConfig = list("FR23" = c("FR2", "FR3")),
+  LandSlope = list("Mod" = c("Mod", "Sev")),
+  Condition1 = list("RRN" = c("RRNn", "RRAn"),"RRE" = c("RRAe", "RRNe")),
+  RoofStyle = list("Gable" = c("Gable", "Shed")), # On Wikipedia are sinonyms
+  ExterCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")), # BlA = Below Average, AbA= Above Average
+  BsmtCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd")),
+  Heating = list("FWF" = c("Floor", "Wall")), # Merge wall and floor furnace
+  HeatingQC = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
+  Electrical = list("Standard" = c("SBrkr"),"Other" = c("FuseA", "FuseF", "FuseP", "Mix")),
+  GarageQual = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
+  GarageCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex"))
+)
+# What about column Functional?
+# What about column SaleType and SaleCondition?
+
+# Adapting fct_collapse because it wasn't doing what I wanted.
+fct_collapse_perso <- function (.f, ..., group_other = FALSE) 
+{
+  new <- rlang::dots_list(...)[[1]][[1]]
+  levs <- as.list(unlist(new, use.names = FALSE))
+  if (group_other) {
+    f <- check_factor(.f)
+    levels <- levels(f)
+    new[["Other"]] <- levels[!levels %in% levs]
+    levs <- levels
+  }
+  names(levs) <- names(new)[rep(seq_along(new), vapply(new, 
+    length, integer(1)))]
+  fct_recode(.f, !!!levs)
+}
+
+# TODO Do it with apply/lapply
+for(i in 1:length(test.list)){
+  full[[names(test.list)[i]]] <- fct_collapse_perso(full[[names(test.list)[i]]], list(test.list[[i]]))
+}
+```
+
+```{r Feature eng reagarding y}
+full <- full %>%
+  inner_join(
+    train %>% group_by(Neighborhood) %>% summarise(AvgNeighbourSalePrice = mean(SalePrice)),
+    by = "Neighborhood"
+  ) %>%
+  inner_join(
+    train %>% group_by(LotShape) %>% summarise(AvgLotShapeSalePrice = mean(SalePrice)),
+    by = "LotShape"
+  ) %>%
+  inner_join(
+    train %>% group_by(OverallCond) %>% summarise(AvgOverallCondSalePrice = mean(SalePrice)),
+    by = "OverallCond"
+  ) %>%
+    inner_join(
+    train %>% group_by(MSSubClass) %>% summarise(AvgMSSubClassSalePrice = mean(SalePrice)),
+    by = "MSSubClass"
+  )
+```
+
+```{r}
+full.modeled <- model.matrix(SalePrice ~ ., data = full)
+
+train.modeled <- full.modeled %>%
+  as.data.frame() %>% 	  
+  filter(typetrain == 1) %>% 	  
+  dplyr::select(-typetrain) 
+
+test.modeled <- full.modeled %>%
+  as.data.frame() %>% 	  
+  filter(typetrain == 0) %>%	 
+  select(-typetrain)	  
+
+train <- full %>%
+  as.data.frame() %>% 
+  filter(type == "train") %>% 
+  dplyr::select(-type)
+
+test <- full %>%
+  as.data.frame() %>% 
+  filter(type == "test") %>% 
+  dplyr::select(-type)
+```
+
+We start by fitting a linear model and try to validate the hypothesis inherent to the linear model.
+
+```{r Full LM, warning=F}
+res.full.lm <- lm(train$SalePrice~., data = train.modeled)
+res.full.log.lm <- lm(log(train$SalePrice)~., data = train.modeled)
+```
+
+
+```{r, warning = F}
+pred <- predict(
+  res.full.log.lm,
+  newdata = test.modeled
+)
+rmses$log.lm <- sqrt(mean((exp(pred) - test.y)^2))
+
+rmses
+```
+
+## Model Tuning
+
+### Variable Selection
+
+We use a stepwise method with the BIC criterion to determine the best model to use.
+
+```{r Variable selection}
+res.backward <- stepAIC(
+  res.full.log.lm,
+  ~.,
+  trace = F,
+  k = log(nrow(train)),
+  direction=c('backward')
+)
+```
+
+```{r}
+summary(res.backward)
+```
+```{r, warning = F}
+pred <- predict(
+  res.backward,
+  newdata = train.modeled
+)
+rmses$log.lm <- sqrt( mean( (exp(pred) - test.y)^2 ) )
+
+rmses
+```
+
+
+
+
