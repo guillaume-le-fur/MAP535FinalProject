@@ -1,0 +1,180 @@
+---
+title: "code_chunks"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(plotly)
+library(leaps)
+library(MASS)
+library(caret)
+library(tibble)
+library(dplyr)
+library(car)
+library(lmtest)
+library(forcats)
+library(olsrr)
+library(randomForest)
+
+load("data/DataProject.RData")
+```
+
+```{r Data Preprocessing}
+rmses <- list() # Used to store our different RMSEs along the way.
+
+train <- train %>% column_to_rownames("Id")
+test <- test %>% column_to_rownames("Id")
+
+y.colname <- "SalePrice"
+train <- train %>% 
+  rename(
+    "FirstFlrSF" = "1stFlrSF", 
+    "SecondFlrSF" = "2ndFlrSF"
+  )
+test <- test %>% 
+  rename(
+    "FirstFlrSF" = "1stFlrSF", 
+    "SecondFlrSF" = "2ndFlrSF"
+  )
+
+full <- train %>% 
+  mutate(type = "train") %>% # mutate creates a new variable
+  rbind(test %>% mutate(type = "test")) %>% 
+  mutate_if(is.factor, as.factor) %>% 
+  transform(type = as.factor(type))
+old.full.dim <- dim(full)
+
+full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
+old.full.modeled.dim <- dim(full.modeled)
+```
+
+```{r Factors relevelling and deleting some features}
+full <- full %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
+
+test.list <- list(
+  Exterior1st = list("Shng" = c("AsbShng", "AsphShn"),"Brk" = c("BrkComm", "BrkFace"),"Stucco" = c("ImStucc", "Stucco"),"Other" = c("CBlock", "Stone")),
+  LotConfig = list("FR23" = c("FR2", "FR3")),
+  LandSlope = list("Mod" = c("Mod", "Sev")),
+  Condition1 = list("RRN" = c("RRNn", "RRAn"),"RRE" = c("RRAe", "RRNe")),
+  RoofStyle = list("Gable" = c("Gable", "Shed")), # On Wikipedia are sinonyms
+  ExterCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")), # BlA = Below Average, AbA= Above Average
+  BsmtCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd")),
+  Heating = list("FWF" = c("Floor", "Wall")), # Merge wall and floor furnace
+  HeatingQC = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
+  Electrical = list("Standard" = c("SBrkr"),"Other" = c("FuseA", "FuseF", "FuseP", "Mix")),
+  GarageQual = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex")),
+  GarageCond = list("BlA" = c("Fa", "Po"),"AbA" = c("Gd", "Ex"))
+)
+# What about column Functional?
+# What about column SaleType and SaleCondition?
+
+# Adapting fct_collapse because it wasn't doing what I wanted.
+fct_collapse_perso <- function (.f, ..., group_other = FALSE) 
+{
+  new <- rlang::dots_list(...)[[1]][[1]]
+  levs <- as.list(unlist(new, use.names = FALSE))
+  if (group_other) {
+    f <- check_factor(.f)
+    levels <- levels(f)
+    new[["Other"]] <- levels[!levels %in% levs]
+    levs <- levels
+  }
+  names(levs) <- names(new)[rep(seq_along(new), vapply(new, 
+    length, integer(1)))]
+  fct_recode(.f, !!!levs)
+}
+
+# TODO Do it with apply/lapply
+for(i in 1:length(test.list)){
+  full[[names(test.list)[i]]] <- fct_collapse_perso(full[[names(test.list)[i]]], list(test.list[[i]]))
+}
+new.full.dim <- dim(full)
+```
+
+
+```{r Feature eng reagarding y}
+full <- full %>% 
+  inner_join(
+    train %>% group_by(Neighborhood) %>% summarise(AvgNeighbourSalePrice = mean(SalePrice)),
+    by = "Neighborhood"
+  ) %>%
+  inner_join(
+    train %>% group_by(LotShape) %>% summarise(AvgLotShapeSalePrice = mean(SalePrice)),
+    by = "LotShape"
+  ) %>% 
+  inner_join(
+    train %>% group_by(OverallCond) %>% summarise(AvgOverallCondSalePrice = mean(SalePrice)),
+    by = "OverallCond"
+  ) %>% 
+    inner_join(
+    train %>% group_by(MSSubClass) %>% summarise(AvgMSSubClassSalePrice = mean(SalePrice)),
+    by = "MSSubClass"
+  )
+```
+
+
+```{r Recreate modeled data}
+full.modeled <- model.matrix(SalePrice ~ ., data = full)
+new.full.modeled.dim <- dim(full.modeled)
+
+train.modeled <- full.modeled %>%
+  as.data.frame() %>% 	  
+  filter(typetrain == 1) %>% 	  
+  dplyr::select(-typetrain) 
+
+test.modeled <- full.modeled %>%
+  as.data.frame() %>% 	  
+  filter(typetrain == 0) %>%	 
+  select(-typetrain)	  
+
+train <- full %>%
+  as.data.frame() %>% 
+  filter(type == "train") %>% 
+  dplyr::select(-type)
+
+test <- full %>%
+  as.data.frame() %>% 
+  filter(type == "test") %>% 
+  dplyr::select(-type)
+```
+
+```{r Logarithmic fit}
+trainlog  <- train.modeled %>%
+  as.data.frame() %>% 
+  cbind(data.frame(SalePrice = train$SalePrice)) %>% 
+  mutate(logSalePrice=log(SalePrice)) %>% 
+  select(-SalePrice)
+
+res.full.log.lm <- lm(logSalePrice~., data = trainlog)
+```
+
+```{r Variable selection}
+res.backward <- stepAIC(
+  res.full.log.lm,
+  SalePrice~1,
+  trace = F,
+  k = log(nrow(train)),
+  direction=c('backward')
+)
+
+```
+
+```{r HyperParameter Tuning, warning = F}
+res.caret <- caret::train(
+  x = train.modeled,
+  y = train$SalePrice,
+  method = "glmnet",
+  tuneGrid = expand.grid(
+    alpha = seq(0, 0.03, 0.002),
+    lambda = seq(0, 1e5, 1000)
+  ),
+  metric = "RMSE"
+)
+```
+
+```{r Object to save}
+save(res.backward, res.caret, file = "./heavy_runs.RData")
+```
+

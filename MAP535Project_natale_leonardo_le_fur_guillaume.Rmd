@@ -16,13 +16,15 @@ library(car)
 library(lmtest)
 library(forcats)
 library(olsrr)
+library(randomForest)
 
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 load("data/DataProject.RData")
+load("heavy_runs.RData")
 ```
 
 ```{r Data Preprocessing}
-rmses <- list() #Used to store our different RMSEs along the way.
+rmses <- list() # Used to store our different RMSEs along the way.
 
 train <- train %>% column_to_rownames("Id")
 test <- test %>% column_to_rownames("Id")
@@ -46,75 +48,13 @@ full <- train %>%
   transform(type = as.factor(type))
 old.full.dim <- dim(full)
 
-model.data <- function(full){
-  train <- full %>%
-    as.data.frame() %>% 
-    filter(type == "train") %>% 
-    dplyr::select(-type)
-  
-  test <- full %>%
-    as.data.frame() %>% 
-    filter(type == "test") %>% 
-    dplyr::select(-type)
-
-  train.y <- train %>% 
-    select(SalePrice) %>%
-    "$"(SalePrice)
-  train.x <- train %>%
-    select(-SalePrice)
-  
-  test.x <- test %>% 
-    select(-SalePrice)
-  test.y <- test %>% 
-    select(SalePrice) %>% 
-    "$"(SalePrice) 
-
-  full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
-  train.modeled <- full.modeled %>%
-    as.data.frame() %>% 
-    filter(typetrain == 1) %>% 
-    dplyr::select(-typetrain) %>% 
-    as.matrix()
-  test.modeled <- full.modeled %>%
-    as.data.frame() %>% 
-    filter(typetrain == 0) %>%
-    select(-typetrain) %>% 
-    as.matrix()
-  list(
-    train = train,
-    train.x = train.x,
-    train.y = train.y,
-    test = test,
-    test.x = test.x,
-    test.y = test.y,
-    full.modeled = full.modeled,
-    train.modeled = train.modeled,
-    test.modeled = test.modeled
-  )
-}
-
-modeled.data <- model.data(full)
-
-full.modeled <- modeled.data$full.modeled
+full.modeled <- model.matrix(SalePrice ~ ., data = full) # creates dummy variables
 old.full.modeled.dim <- dim(full.modeled)
-
-# Some are rendundant here but it's just to be estra sure that
-# the factor levels are the good ones.
-train.modeled <- modeled.data$train.modeled
-test.modeled <- modeled.data$test.modeled
-train <- modeled.data$train
-test <- modeled.data$test
-train.x <- modeled.data$train.x
-train.y <- modeled.data$train.y
-test <- modeled.data$test
-test.x <- modeled.data$test.x
-test.y <- modeled.data$test.y
 ```
 
+For this project, we are interested in predicting house prices in Ames, Iowa given several descriptive features.
 
-We are interested in predicting house prices in Ames, Iowa given several descriptive features.
-
-Our goal is to come up with the best possible model and to master the techniques covered in class by providing a step-by-step solution which could be easily interpretable and adopted as a solid base for future projects.     
+Our goal is to come up with the best possible model and to master the techniques covered in class by providing a step-by-step solution and analysis of the problem, which could be easily interpretable and adopted as a solid base for future projects.
 
 # Data Exploration
 
@@ -124,7 +64,9 @@ The dataset is composed of:
 - The column to predict is : `r y.colname`.
 - Number of missing values : `r sum(!complete.cases(full))`
 
-```{r SalePrice graphs, fig.height=4}
+## Feature analysis
+
+```{r SalePrice graphs, fig.height=3}
 par(mfrow = c(1,2))
 
 hist(full$SalePrice, breaks = 100, main = "Histogram of SalePrice", xlab = "SalePrice", ylab = "Frequency")
@@ -133,14 +75,15 @@ hist(log(full$SalePrice), breaks = 100, main = "Histogram of SalePrice", xlab = 
 ```
 The distribution of _SalePrice_ has a highly positive skewness. Plotting the distribution on the log scale transforms our skewed data to approximately conform to normality
 
-```{r SalePrice Condition scatterplot, fig.height=4}
+```{r SalePrice Condition scatterplot, fig.height=3}
 par(mfrow = c(1,2))
 with(full, plot(OverallCond, SalePrice))
 with(full, plot(GrLivArea, SalePrice))
 ```
+
 Intuitively, "Overall Condition" and  "Above Ground Living Area Square Feet" are two important indicators of "Sale Price". The pattern is clear for the latter, while the former is less obvious and there are many high values of _SalePrice_ for average values of _OveralCond_. This could reflects other factor such as the house location.
 
-```{r Neighborhood boxplots, fig.height=4}
+```{r Neighborhood boxplots, fig.height=3}
 graphics::layout(
   matrix(c(1,2), 1, 2, byrow = TRUE),
   widths=c(2,1), 
@@ -163,6 +106,7 @@ The graph on the left shows the boxplot of the SalePrice for every Neighborhood.
 # Data Manipulation
 
 We have noticed how the following categorical columns do not add much value to our data.
+
 ```{r Summary of deleted columns}
 summary.columns <- c("Utilities", "Street", "Condition2", "RoofMatl", "Exterior2nd")
 full.sum <- summary(full)
@@ -172,16 +116,15 @@ full.sum[, m]
 
 The columns _Utilities_, _Street_, _Condition2_ and _RoofMatl_ have been removed as almost all of our observations fall into one particular class. _Exterior2nd_ has been dropped because it presents the same values as _Exterior1st_.
 
-Following a closer look at each feature, we noticed how some factor levels are very underrepresented. This could raise flags when divinding into training and test data: with a random split, some factor levels which appear only a few times, could end all in the test data, resulting in a column of only 1s in our train data.  
+Following a closer look at each feature, we noticed how some factor levels are very underrepresented. This could raise flags when divinding into training and test data: with a random split, some factor levels which appear only a few times, could end all in the test data, resulting in a column of only 1s in our train data.
 
 Our solution consists in gathering more information on the different categories and group them when possible. For instance, "Gable" and "Shed" are very similar kinds of _RoofStyle_ and thus have been encoded into one level.
 Levels in factors expressing conditions, have been grouped according to their grade: "Good" and "Excellent" become "Above Average".
 
 A more elegant solution could consist in forcing each category to be represented in both training and test.
+
 ```{r Factors relevelling and deleting some features}
 full <- full %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
-train <- train %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
-test <- test %>% select(-c(Utilities,Street,Condition2,RoofMatl,Exterior2nd))
 
 test.list <- list(
   Exterior1st = list("Shng" = c("AsbShng", "AsphShn"),"Brk" = c("BrkComm", "BrkFace"),"Stucco" = c("ImStucc", "Stucco"),"Other" = c("CBlock", "Stone")),
@@ -223,6 +166,8 @@ for(i in 1:length(test.list)){
 new.full.dim <- dim(full)
 ```
 
+We also created new features based on aggregations of the response variable by some of the predictors. We computed the average SalePrice per : Neighborhood, LotShape, OverallCond and MSSubClass.
+
 ```{r Feature eng reagarding y}
 full <- full %>% 
   inner_join(
@@ -243,29 +188,40 @@ full <- full %>%
   )
 ```
 
-```{r Recreate modeled data}
-new.modeled.data <- model.data(full)
 
-full.modeled <- new.modeled.data$full.modeled
+```{r Recreate modeled data}
+full.modeled <- model.matrix(SalePrice ~ ., data = full)
 new.full.modeled.dim <- dim(full.modeled)
 
-train.modeled <- new.modeled.data$train.modeled
-test.modeled <- new.modeled.data$test.modeled
+train.modeled <- full.modeled %>%
+  as.data.frame() %>% 	  
+  filter(typetrain == 1) %>% 	  
+  dplyr::select(-typetrain) 
 
-train <- new.modeled.data$train
-test <- new.modeled.data$test
-train.x <- new.modeled.data$train.x
-train.y <- new.modeled.data$train.y
-test <- new.modeled.data$test
-test.x <- new.modeled.data$test.x
-test.y <- new.modeled.data$test.y
+test.modeled <- full.modeled %>%
+  as.data.frame() %>% 	  
+  filter(typetrain == 0) %>%	 
+  select(-typetrain)	  
+
+train <- full %>%
+  as.data.frame() %>% 
+  filter(type == "train") %>% 
+  dplyr::select(-type)
+
+test <- full %>%
+  as.data.frame() %>% 
+  filter(type == "test") %>% 
+  dplyr::select(-type)
 ```
 
 With this approach, we transition from `r old.full.modeled.dim[2]` to `r new.full.modeled.dim[2]` columns.
+
 ```{r Correlation threshold definition}
 cor.threshold <- .7
 ```
-We still have to many columns to plot a correlation matrix. Therefore, we display only correlations that are above the value `r cor.threshold`.
+
+But even though this method allowed us to reduce significantly our number of columns, we still have to many columns to plot a correlation matrix. Therefore, we display only correlations that are above the value `r cor.threshold`.
+
 ```{r High Correlations function}
 train.numeric <- train %>% dplyr::select_if(is.numeric)
 cor.train <- cor(train.numeric)
@@ -329,10 +285,11 @@ get.high.correlations <- function(cor.matrix, cor.threshold = .7, column.filter 
     cat('\\end{center}')
     cat('\\end{figure}')
 ```
+
 _AvgNeighbourSalePrice_ is a new feature obtained by grouping data by _SalePrice_ and calculating the mean. 
 It is very interesting to see how _GarageArea_ and _GarageCars_ are important to Americans when determing house prices. The _OverallQual_ is also very considered, together with the _GrLivArea_. 
 
-We still have a high number of features for the number of observations(`r dim(train.modeled)`). We will perform some variable selection to reduce the number of predictors.
+We still have a high number of features for the number of observations(`r dim(train.modeled)`). We will later perform some variable selection to reduce the number of predictors.
 
 # Modeling and Diagnostics
 
@@ -360,7 +317,7 @@ In order to try to fix, or at least minimize, the heteroskedasticity of the data
 ```{r Logarithmic fit}
 trainlog  <- train.modeled %>%
   as.data.frame() %>% 
-  cbind(data.frame(SalePrice = train.y)) %>% 
+  cbind(data.frame(SalePrice = train$SalePrice)) %>% 
   mutate(logSalePrice=log(SalePrice)) %>% 
   select(-SalePrice)
 
@@ -373,7 +330,7 @@ pred <- predict(
   newdata = test.modeled %>%
     as.data.frame()
 )
-rmses$log.lm <- sqrt(mean((exp(pred) - test.y)^2))
+rmses$logarithm.lm <- sqrt(mean((exp(pred) - test$SalePrice)^2))
 ```
 
 The log-transform of the response improves the diagnostic plots:
@@ -394,7 +351,7 @@ The issues raised by heteroskedasticity are the following:
 
 ### Outlier analysis.
 
-```{r Cooks distance, warning=F}
+```{r Cooks distance, warning=F, fig.height=4}
 plot(res.full.lm, which = 5)
 ```
 We observe points with Cook distance greater than 1 so we can, at first sight, infer that there are no outliers. However, a more detailed outlier analysis is still necessary.
@@ -402,12 +359,17 @@ We observe points with Cook distance greater than 1 so we can, at first sight, i
 ```{r InfluenceIndexPlot}
 car::influenceIndexPlot(res.full.lm, vars=c("Studentized", "hat"))
 ```
+
 The first plot makes it possible to identify outliers, many observations seem doubtful. The second plot shows the presence of many leverage points (with hate values above 0.5).
+
 ```{r, OutlierTest}
 res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
 outliers.index <- paste(names(res.outlier.test$p), collapse = ", ")
 ```
+
 We consider necessary to perform a Bonferroni _OutlierTest_ to identify outliers. The following points are labeled as such by the test: `r outliers.index`.
+
+After analysis, it seems that this points are not really outliers because half of them are huge houses in the NoRidge Heighborhood. They are atypical point rather than outliers. We decide not to remove them in the end. 
 
 ## Model Tuning
 
@@ -415,7 +377,7 @@ We consider necessary to perform a Bonferroni _OutlierTest_ to identify outliers
 
 We use a stepwise method with the BIC criterion to determine the best model to use.
 
-```{r Variable selection}
+```{r Variable selection, eval=F, include = F}
 res.backward <- stepAIC(
   res.full.log.lm,
   SalePrice~1,
@@ -425,11 +387,6 @@ res.backward <- stepAIC(
 )
 ```
 
-```{r}
-summary(res.backward)
-```
-
-
 ```{r, warning = F}
 bic.kept.columns <- rownames(summary(res.backward)$coefficients)
 bic.lm.res <- lm(
@@ -437,13 +394,13 @@ bic.lm.res <- lm(
   data = train.modeled %>%
     as.data.frame() %>% 
     select(bic.kept.columns) %>%
-    cbind(data.frame(SalePrice = train.y))
+    cbind(data.frame(SalePrice = train$SalePrice))
 )
 pred <- predict(
   bic.lm.res, 
   newdata = test.modeled[, rownames(summary(res.backward)$coefficients)] %>% as.data.frame()
 )
-rmses$bic.model <- sqrt(mean((pred - test.y)^2))
+rmses$BIC.model <- sqrt(mean((pred - test$SalePrice)^2))
 ```
 
 ```{r}
@@ -453,18 +410,26 @@ as.data.frame(summary(res.backward)$coefficients) %>%
   arrange(prob) %>%
   slice(1:15) %>%
   column_to_rownames("colname") %>% 
-  select(prob)
+  select(prob) %>% 
+  knitr::kable(digits = 150, caption = "Most significative columns according to the BIC criterion")
 ```
+
+We can see that the most significative predictors correspond to reasonable criteria when estimating the price of a house (surface, neighborhood, Garage, Year, etc.).
 
 
 ### Hyper-parameter tuning
 
-Uncomment to run, takes around 30 seconds to run.
+We try to fit an ElasticNet model and tune its hyperparameters ($\lambda$ and $\alpha$). using `caret::train`
 
-```{r HyperParameter Tuning, warning = F}
+After some tests, we use the following intervals for the gridsearch :
+
+- $\alpha \in [0, 0.03]$ - step : 0.002
+- $\lambda \in [0, 1.10^5]$ - step : 1000
+
+```{r HyperParameter Tuning, warning = F, eval = F, include = F}
 res.caret <- caret::train(
   x = train.modeled,
-  y = train.y,
+  y = train$SalePrice,
   method = "glmnet",
   tuneGrid = expand.grid(
     alpha = seq(0, 0.03, 0.002),
@@ -474,68 +439,32 @@ res.caret <- caret::train(
 )
 ```
 
-```{r, Plot of res}
-# plot(res.caret)
+```{r}
+best.alpha <- res.caret$bestTune$alpha
+best.lambda <- res.caret$bestTune$lambda
 ```
 
+
+```{r, Plot of res, fig.height=4, fig.width=6}
+plot(res.caret)
+```
+
+The optimal values are $\alpha$ = `r best.alpha` and $\lambda$ = `r best.lambda`.
+
 ```{r, Optimal Parameters}
-res.caret$bestTune
-
-# test.data <- test.modeled %>% 
-#   cbind(test.y) %>% 
-#   `colnames<-`(c(colnames(test.modeled), "SalePrice")) %>% 
-#   colnames()
-
 optimal.model <- glmnet::glmnet(
-  x = train.modeled, 
-  y = train.y, 
+  x = train.modeled %>% as.matrix(), 
+  y = train$SalePrice, 
   alpha = res.caret$bestTune$alpha, 
   lambda = res.caret$bestTune$lambda
 )
-res.pred.glmnet <- predict(optimal.model, newx = test.modeled) - test.y
-sqrt(mean(res.pred.glmnet^2))
-```
-
-
-```{r, elasticNetFit}
-predict.elsaticnet <- function(train.x, train.y, test.x, test.y, alpha = 0.01, lambda = c(1e5, .5e5, 32200, .25e5, 18000, 1e4, .5e4, 1e3, 1e2, 1e1, 1, 1e-1, 1e-2)){
-  
-  # Fit
-  res.glmnet <- glmnet::glmnet(
-    x = train.x,
-    y = train.y,
-    alpha = 0,
-    lambda = lambda
-  )
-  
-  # Prediction
-  res.pred <- predict(res.glmnet, newx = test.x)
-  colnames(res.pred) <- lambda
-  # MSE
-  mses <- apply(res.pred, 2, function(col){
-    sum((col - test.y)^2)
-  })
-  names(mses) <- as.character(lambda)
-  
-  # Return object
-  list(
-    model = res.glmnet,
-    pred = res.pred,
-    mse = mses,
-    lambda = lambda
-  )
-}
-
-pred.res <- predict.elsaticnet(
-  train.x = train.modeled, 
-  train.y = train.y, 
-  test.x = test.modeled, 
-  test.y = test.y
-)
-# plot(sqrt(pred.res$mse) ~ pred.res$lambda, log = "x", type = "o", main = "RMSE=f(lambda)", xlab="lambda", ylab="RMSE")
+res.pred.glmnet <- predict(optimal.model, newx = test.modeled %>% as.matrix()) - test$SalePrice
+rmses$optimal.glmnet <- sqrt(mean(res.pred.glmnet^2))
 ```
 
 ### Anova
+
+We also run an Analysis of Variance to determine the importance of certain factors on the data.
 
 ```{r}
 anova.full <- anova(res.full.lm)
@@ -546,54 +475,73 @@ as.data.frame(anova.full) %>%
   select(prob, rown) %>% 
   arrange(prob) %>% 
   slice(1:5) %>% 
-  column_to_rownames("rown") 
+  column_to_rownames("rown") %>% 
+  knitr::kable(caption = "Five most significative columns according to Anova", digits = 500)
 ```
 
-The output of the Anova makes a lot of sense. Indeed, the most signifcant variables are the ones that comes to one's mind when estiamting the price of a house : Type of building sold (MSSubClass), Neighborhood where the place is located, Overall quality of the good, the area of the place and the linear feet of street connected to property.
+The output of the Anova makes a lot of sense. Indeed, the most signifcant variables are the ones that comes to one's mind when estimating the price of a house : Type of building sold (MSSubClass), Neighborhood where the place is located, Overall quality of the good, the area of the place and the linear feet of street connected to property.
+
+\newpage
 
 # Final Models
 
 ```{r}
-library(randomForest)
-randomForest::randomForest(x = train.modeled, y = train.y, xtest = test.modeled, ytest = test.y)
+random.forest.res <- randomForest::randomForest(
+  x = train.modeled, 
+  y = train$SalePrice, 
+  xtest = test.modeled, 
+  ytest = test$SalePrice
+)
+
+rmses$random.forests <- sqrt(tail(random.forest.res$test$mse, n = 1))
 ```
 
 ```{r}
 gbm.res <- gbm::gbm(
   SalePrice ~ ., 
-  data = train.x %>% cbind(data.frame(SalePrice = train.y)),
-    # train.modeled %>%
-    # as.data.frame() %>%
-    # cbind(data.frame(SalePrice = train.y)),
+  data = train,
   distribution = "gaussian",
   n.trees = 500,
   interaction.depth	= 2,
   n.minobsinnode = 10,
   cv.folds = 5
 )
-pred <- predict(gbm.res, newdata = test.x, n.trees = 500) - test.y
-sqrt(mean(pred^2))
+pred <- predict(gbm.res, newdata = test %>% select(-SalePrice), n.trees = 500) - test$SalePrice
+rmses$gradient.boosting <- sqrt(mean(pred^2))
 ```
 
 ```{r}
 xgboost.res <- xgboost::xgboost(
-  data = train.modeled,
-  label = train.y,
+  data = train.modeled %>% as.matrix(),
+  label = train$SalePrice,
   nrounds = 100,
   verbose = 0
 )
-pred <- predict(xgboost.res, newdata = test.modeled) - test.y
-sqrt(mean(pred^2))
+pred <- predict(xgboost.res, newdata = test.modeled %>% as.matrix()) - test$SalePrice
+rmses$xgboost <- sqrt(mean(pred^2))
 ```
 
 
 ```{r}
-data.frame(Model = names(rmses), RMSE = unlist(rmses))
+data.frame(
+  Model = names(rmses),
+  RMSE = unlist(rmses)) %>% 
+  mutate(Model = tools::toTitleCase(stringr::str_replace(Model, "\\.", " "))) %>% 
+  column_to_rownames("Model") %>% 
+  knitr::kable(caption = "Summary of model performance.")
 ```
 
+We have tried several models that were not considered in this course to be able to compare the models that we have built and analysed in this document.
+We can see that the linear model is not performing that bad given the difference of RMSE it has with more elaborated models.
+
+The model obtained with the BIC criterion doesn't have a really good performance, mostly because it has a reduced number of columns. If we had had more data, maybe we could have kept more columns and come out with a better model using the BIC criterion. The data produced by BIC could be useful if we try to fit complicated models because the training time would be smaller given the small number of predictors.
+
+We can also notice that penalization doesn't make ou model better, which can look surprising.
+
+Because they are not being considered in this course, we do not keep random forests or gradient boosting models as our final model, we choose to keep the linear model with the log of the response variable as our final model because it is a good compromise between explainability and perfromance.
 
 # Discussion
 
-If we had had more rows, we could have kept more columns and have a better model. Is it relevant to say that?
-
+This project was a good opportunity to put what we have learnt this semester into practice and also to become more at ease with R.
+It would have been nice to have more rows in the data set to be able to obtain more robust models.
 
