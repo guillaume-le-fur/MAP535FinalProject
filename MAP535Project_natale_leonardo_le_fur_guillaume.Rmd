@@ -331,7 +331,7 @@ trainlog  <- train.modeled %>%
 res.full.log.lm <- lm(logSalePrice~., data = trainlog)
 ```
 
-```{r, warning = F}
+```{r logarithmic prediction, warning = F}
 pred <- predict(
   res.full.log.lm,
   newdata = test.modeled %>%
@@ -342,7 +342,7 @@ rmses$logarithm.lm <- sqrt(mean((exp(pred) - test$SalePrice)^2))
 
 The log-transform of the response improves the diagnostic plots:
 
-```{r, warning = F}
+```{r plots of log lm, warning = F}
 par(mfrow = c(2, 2))
 plot(res.full.log.lm, which = c(1, 2, 3))
 acf(residuals(res.full.log.lm), main = "")
@@ -369,7 +369,7 @@ car::influenceIndexPlot(res.full.lm, vars=c("Studentized", "hat"))
 
 The first plot makes it possible to identify outliers, many observations seem doubtful. The second plot shows the presence of many leverage points (with hate values above 0.5).
 
-```{r, OutlierTest}
+```{r OutlierTest}
 res.outlier.test <- car::outlierTest(res.full.lm, n.max = 20)
 outliers.index <- paste(names(res.outlier.test$p), collapse = ", ")
 ```
@@ -394,7 +394,7 @@ res.backward <- stepAIC(
 )
 ```
 
-```{r, warning = F}
+```{r BIC lm, warning = F}
 bic.kept.columns <- rownames(summary(res.backward)$coefficients)
 nb.bic.columns <- length(bic.kept.columns)
 bic.lm.res <- lm(
@@ -411,7 +411,7 @@ pred <- predict(
 rmses$BIC.model <- sqrt(mean((pred - test$SalePrice)^2))
 ```
 
-```{r}
+```{r BIC relevant columns}
 as.data.frame(summary(res.backward)$coefficients) %>%
   rownames_to_column("colname") %>%
   rename("prob" = "Pr(>|t|)") %>%
@@ -448,19 +448,19 @@ res.caret <- caret::train(
 )
 ```
 
-```{r}
+```{r Best parameters}
 best.alpha <- res.caret$bestTune$alpha
 best.lambda <- res.caret$bestTune$lambda
 ```
 
 
-```{r, Plot of res, fig.height=4, fig.width=6}
+```{r Plot of hyper parameter tuning, fig.height=4, fig.width=6}
 plot(res.caret)
 ```
 
 The optimal values are $\alpha$ = `r best.alpha` and $\lambda$ = `r best.lambda`.
 
-```{r, Optimal Parameters}
+```{r Optimal Parameters}
 optimal.model <- glmnet::glmnet(
   x = train.modeled %>% as.matrix(), 
   y = train$SalePrice, 
@@ -475,7 +475,7 @@ rmses$optimal.glmnet <- sqrt(mean(res.pred.glmnet^2))
 
 We also run an Analysis of Variance to determine the importance of certain factors on the data.
 
-```{r}
+```{r Anova}
 anova.full <- anova(res.full.lm)
 as.data.frame(anova.full) %>% 
   rownames_to_column("rown") %>% 
@@ -494,7 +494,7 @@ The output of the Anova makes a lot of sense. Indeed, the most signifcant variab
 
 # Final Models
 
-```{r}
+```{r Random Forests}
 random.forest.res <- randomForest::randomForest(
   x = train.modeled, 
   y = train$SalePrice, 
@@ -505,7 +505,7 @@ random.forest.res <- randomForest::randomForest(
 rmses$random.forests <- sqrt(tail(random.forest.res$test$mse, n = 1))
 ```
 
-```{r}
+```{r Gradient Boosting}
 gbm.res <- gbm::gbm(
   SalePrice ~ ., 
   data = train,
@@ -519,7 +519,7 @@ pred <- predict(gbm.res, newdata = test %>% select(-SalePrice), n.trees = 500) -
 rmses$gradient.boosting <- sqrt(mean(pred^2))
 ```
 
-```{r}
+```{r XGBoost}
 xgboost.res <- xgboost::xgboost(
   data = train.modeled %>% as.matrix(),
   label = train$SalePrice,
@@ -531,7 +531,7 @@ rmses$xgboost <- sqrt(mean(pred^2))
 ```
 
 
-```{r}
+```{r Summary of models}
 data.frame(
   Model = names(rmses),
   RMSE = unlist(rmses)) %>% 
