@@ -542,6 +542,6 @@ Because they are not being considered in this course, we do not keep random fore
 
 # Discussion
 
-This project was a good opportunity to put what we have learnt this semester into practice and also to become more at ease with R.
+This project was a good opportunity to put what we have learnt this semester into practice and also to become more at ease with R. Rather than a pure data science project, aiming at having the model with the best score, it was interesting to focus on other important aspects such as outlier analysis or variable selection.
+We have built a model that is pretty robust, which does not contain too many predictors and that has a satisfying RMSE.
 It would have been nice to have more rows in the data set to be able to obtain more robust models.
-
