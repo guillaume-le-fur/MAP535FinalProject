@@ -81,7 +81,7 @@ with(full, plot(OverallCond, SalePrice))
 with(full, plot(GrLivArea, SalePrice))
 ```
 
-Intuitively, "Overall Condition" and  "Above Ground Living Area Square Feet" are two important indicators of "Sale Price". The pattern is clear for the latter, while the former is less obvious and there are many high values of _SalePrice_ for average values of _OverallCond_. This could reflects other factor such as the house location.
+Intuitively, "Overall Condition" and  "Above Ground Living Area Square Feet" are two important indicators of "Sale Price". The pattern is clear for the latter, while the former is less obvious and there are many high values of _SalePrice_ for average values of _OverallCond_. This could reflect other factors such as the house location.
 
 ```{r Neighborhood boxplots, fig.height=3}
 graphics::layout(
@@ -100,8 +100,9 @@ vec.means = df.means$avg
 names(vec.means) <- df.means$Neighborhood
 boxplot(vec.means, main = "Means of Neighborhoods")
 ```
+
 Another intuitive factor that comes to mind when thinking about the price of a house is its neighbourhood.
-The graph on the left shows the boxplot of the _SalePrice_ for every _Neighborhood._ Three neighborhood have noticeably higher values than the others. The boxplot on the right helps us checking as it plots the averages of the _SalePrice_ per Neighborhood. Only one value really stands out and the name of the coresponding _Neighborhood_ is `r names(vec.means)[which.max(vec.means)]`.
+The graph on the left shows the boxplot of the _SalePrice_ for every _Neighborhood._ Three neighborhoods have noticeably higher values than the others. The boxplot on the right helps us checking as it plots the averages of the _SalePrice_ per Neighborhood. Only one value really stands out and the name of the coresponding _Neighborhood_ is `r names(vec.means)[which.max(vec.means)]`.
 
 # Data Manipulation
 
@@ -355,7 +356,7 @@ The issues raised by heteroskedasticity are the following:
 - The OLS estimators are no longer the BLUE (Best Linear Unbiased Estimators) because they are no longer efficient, so the regression predictions will be inefficient too.  
 <!-- - Because of the inconsistency of the covariance matrix of the estimated regression coefficients, the tests of hypotheses, (t-test, F-test) are no longer valid. -->
 
-### Outlier analysis.
+### Outlier analysis
 
 ```{r Cooks distance, warning=F, fig.height=4}
 plot(res.full.lm, which = 5)
@@ -395,6 +396,7 @@ res.backward <- stepAIC(
 
 ```{r, warning = F}
 bic.kept.columns <- rownames(summary(res.backward)$coefficients)
+nb.bic.columns <- length(bic.kept.columns)
 bic.lm.res <- lm(
   SalePrice~.,
   data = train.modeled %>%
@@ -422,6 +424,7 @@ as.data.frame(summary(res.backward)$coefficients) %>%
 
 We can see that the most significative predictors correspond to reasonable criteria when estimating the price of a house (surface, neighborhood, Garage, Year, etc.).
 
+The number of columns that our BIC models have is `r nb.bic.columns`, which is much fewer than our previous models.
 
 ### Hyper-parameter tuning
 
